@@ -6,6 +6,7 @@
 //   TEST_ONLY=true   — só manda uma mensagem de teste e sai
 //   DRY_RUN=true     — consulta as lojas mas não envia nada (mostra no log)
 //   ONLY=smeg,karsten — consulta só essas lojas (para testes)
+//   CATALOG_FILE=catalogo.json — grava a lista de produtos para o site (docs/index.html)
 
 import fs from "node:fs";
 import zlib from "node:zlib";
@@ -618,6 +619,31 @@ function saveState(state) {
   fs.writeFileSync(STATE_FILE, zlib.gzipSync(JSON.stringify(state)));
 }
 
+// Catálogo para o site (docs/): produtos vistos nos últimos 2 dias, com preço e histórico resumido.
+// Campos curtos para o arquivo ficar leve no celular.
+function exportCatalog(state, nowDay, file) {
+  const seen = new Set();
+  const items = [];
+  for (const r of Object.values(state.items)) {
+    if (!r.p || r.d < nowDay - 1) continue;
+    const k = `${r.s}|${r.n}|${r.p}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const prices = (r.h || []).map((x) => x[1]);
+    items.push({
+      b: r.b || "", n: r.n, u: r.u, i: r.i || "", l: r.sn || r.s || "",
+      p: r.p, x: r.px || 0, d: r.lp || 0, a: r.av === false ? 0 : 1,
+      m: prices.length ? Math.min(...prices) : r.p, c: prices.length ? Math.max(...prices) : r.p,
+      s: r.h?.[0]?.[0] || nowDay, v: r.d,
+    });
+  }
+  const cupons = STORES.filter((s) => state.coupons?.[s.id]?.codes?.length || state.coupons?.[s.id]?.pix).map((s) => ({
+    l: s.name, c: state.coupons[s.id].codes.map((k) => k.code), x: state.coupons[s.id].pix || "",
+  }));
+  fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), items, cupons }));
+  console.log(`Catálogo do site: ${items.length} produtos em ${file}`);
+}
+
 // Preço "de costume": o preço que ficou mais dias no ar nos últimos 30 dias.
 function usualPrice(h, nowDay) {
   const from = nowDay - RULES.usualWindowDays;
@@ -970,6 +996,13 @@ async function main() {
 
   state.runs = (state.runs || 0) + 1;
   saveState(state); // salva antes de enviar: se o Telegram falhar, não repete avisos em massa
+  if (process.env.CATALOG_FILE) {
+    try {
+      exportCatalog(state, nowDay, process.env.CATALOG_FILE);
+    } catch (e) {
+      console.log(`ERRO catálogo do site: ${e.message}`);
+    }
+  }
 
   if (firstRun && !ONLY.length) {
     await tg("sendMessage", {

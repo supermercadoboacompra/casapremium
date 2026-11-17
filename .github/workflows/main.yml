@@ -23,7 +23,7 @@ on:
     - cron: "*/30 * * * *"
 
 permissions:
-  contents: read
+  contents: write # publica a lista de produtos do site no ramo "dados"
   actions: write # para uma rodada disparar a próxima
 
 concurrency:
@@ -60,7 +60,20 @@ jobs:
           DIGEST: ${{ github.event_name == 'workflow_dispatch' && inputs.resumo }}
           # Smeg e Lazer Shop bloqueiam os servidores do GitHub: rodam no PC (casapremium-local)
           SKIP: smeg,lazershop
+          CATALOG_FILE: catalogo.json
         run: node bot.mjs
+
+      - name: Publicar lista de produtos para o site
+        if: hashFiles('catalogo.json') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/dados && cp catalogo.json /tmp/dados/
+          cd /tmp/dados
+          git init -q -b dados
+          git add catalogo.json
+          git -c user.name="casa-premium-bot" -c user.email="bot@users.noreply.github.com" commit -qm "lista de produtos"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" dados
 
       - name: Guardar histórico de preços
         if: always()
