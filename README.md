@@ -1,38 +1,34 @@
-# Casa Premium — monitor de preços
+# Casa Premium Bot — v2
 
-Primeira versão gratuita, baseada em URLs de produtos cadastradas manualmente.
+## Arquivos
+- `bot.py`: consulta páginas de produtos e envia alertas.
+- `products.csv`: lista de URLs de produtos.
+- `.github/workflows/casa-premium.yml`: execução manual e agendada a cada 6 horas.
 
-## O que faz
-- Consulta as páginas cadastradas em `products.csv` a cada 6 horas.
-- Tenta ler preços estruturados (JSON-LD / metadados).
-- Guarda histórico local em SQLite.
-- Envia alerta ao Telegram quando atinge o preço-alvo ou cai pelo percentual configurado.
+## Secrets obrigatórios no GitHub
+Settings → Secrets and variables → Actions:
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
 
-## Limitações importantes
-- Não faz descoberta automática de todos os produtos de uma marca.
-- Cada loja tem estrutura própria; algumas páginas usam JavaScript, bloqueiam robôs ou não expõem preço estruturado.
-- O histórico começa quando o monitor é ativado; não inventa histórico anterior.
-- A queda percentual inicial compara com a consulta anterior, não com um histórico de mercado completo.
-- Respeite os termos de uso e limites dos sites. Não contorna login, CAPTCHA ou bloqueios.
+No Telegram, abra @casapremium_bot e envie `/start` antes do primeiro teste.
 
-## Configuração
-1. Crie um repositório GitHub e envie estes arquivos.
-2. No Telegram, abra `https://t.me/casapremium_bot` e toque em **Start**.
-3. Obtenha o `chat_id` enviando uma consulta `getUpdates` à Bot API, conforme a documentação oficial:
-   `https://core.telegram.org/bots/api#getupdates`
-4. No GitHub: Settings → Secrets and variables → Actions → New repository secret:
-   - `TELEGRAM_BOT_TOKEN`: token fornecido pelo BotFather.
-   - `TELEGRAM_CHAT_ID`: seu chat ID numérico.
-5. Edite `products.csv`, substituindo a linha de exemplo por URLs reais de produtos.
-6. Em Actions, execute **Monitorar preços** → Run workflow para testar.
+## Primeiro teste
+Na aba Actions, abra o workflow **Casa Premium** e clique em Run workflow.
+Deixe `Apenas testar o envio do Telegram` marcado. A execução deve mandar uma mensagem de confirmação.
 
-## Colunas do products.csv
-- `id`: identificador único.
-- `name`: nome do produto.
-- `brand`: marca.
-- `url`: URL direta da página do produto.
-- `alert_below_price`: preço máximo para alertar (0 desativa).
-- `min_drop_percent`: queda mínima em relação à consulta anterior.
+## Ativar consultas de produtos
+Depois do teste, edite `products.csv`: remova a linha de comentário e adicione uma linha por URL direta de produto:
+`id,nome,marca,url,preco_alvo,queda_minima_percentual`
 
-## Segurança
-Nunca publique o token do Telegram no código, em issues ou em mensagens. Use apenas GitHub Secrets.
+Exemplo fictício:
+`lecreuset-cocotte-24,Cocotte 24 cm,Le Creuset,https://loja.exemplo/produto,1800,15`
+
+No próximo Run workflow, desmarque o teste para consultar as páginas. A agenda automática roda a cada 6 horas.
+
+## Limitações
+- O bot não descobre automaticamente todo o catálogo das marcas; monitora URLs cadastradas.
+- Algumas lojas bloqueiam robôs ou carregam preços via JavaScript. Nesses casos, o preço não será extraído por esta versão.
+- O histórico começa quando o bot é ativado. Não representa histórico de mercado anterior.
+- A comparação percentual é contra a consulta anterior; o menor preço é o menor observado pelo próprio bot.
+- GitHub Actions tem limites de uso e a execução agendada pode atrasar.
+- Respeite termos de uso e limites das lojas.
