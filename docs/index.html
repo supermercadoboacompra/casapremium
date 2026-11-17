@@ -61,6 +61,17 @@ main{padding:8px 16px 40px;max-width:760px;margin:0 auto}
 .more{display:block;width:100%;margin-top:12px;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit;cursor:pointer}
 .empty{color:var(--mute);text-align:center;padding:40px 8px}
 .best{border-color:var(--good)}
+details.filters{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0}
+details.filters summary{cursor:pointer;font-weight:600}
+#fcount{display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:var(--brand);color:var(--brand-ink);font-size:12px;text-align:center}
+#fcount:empty{display:none}
+.fgrid{display:grid;gap:10px;margin-top:10px}
+.fgrid label{display:grid;gap:4px;font-size:14px;color:var(--mute)}
+.fgrid select,.fgrid input[type=number]{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%}
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fgrid .chk{display:flex;align-items:center;gap:8px;color:var(--ink);font-size:15px}
+.fgrid .chk input{width:20px;height:20px;accent-color:var(--brand)}
+#freset{font:inherit;font-size:14px;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:8px;padding:9px}
 details.cup{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:10px 0}
 details.cup summary{cursor:pointer;font-size:14px}
 details.cup ul{margin:8px 0 0;padding-left:18px;font-size:14px}
@@ -87,11 +98,28 @@ code{background:var(--chip);padding:1px 5px;border-radius:5px}
   <span id="count"></span>
   <select id="sort" aria-label="Ordenar">
     <option value="price">Menor preço</option>
+    <option value="priceDesc">Maior preço</option>
     <option value="off">Maior desconto</option>
+    <option value="name">Nome (A a Z)</option>
     <option value="low">Mais perto do menor já visto</option>
   </select>
 </div>
 <main>
+  <details class="filters" id="filters">
+    <summary>Filtros <span id="fcount"></span></summary>
+    <div class="fgrid">
+      <label>Loja<select id="fstore"><option value="">Todas as lojas</option></select></label>
+      <div class="frow">
+        <label>Preço de<input id="fmin" type="number" inputmode="numeric" placeholder="R$ 0"></label>
+        <label>até<input id="fmax" type="number" inputmode="numeric" placeholder="sem limite"></label>
+      </div>
+      <label class="chk"><input type="checkbox" id="fstock" checked> Só com estoque</label>
+      <label class="chk"><input type="checkbox" id="foff"> Só com desconto anunciado</label>
+      <label class="chk"><input type="checkbox" id="flow"> Só no menor preço já visto</label>
+      <label class="chk"><input type="checkbox" id="fthyme"> Só Le Creuset cor Thyme</label>
+      <button id="freset" type="button">Limpar filtros</button>
+    </div>
+  </details>
   <details class="cup" id="cupbox" hidden><summary>Cupons anunciados nos sites</summary><ul id="cups"></ul></details>
   <div class="list" id="list"></div>
   <button class="more" id="more" hidden>Mostrar mais</button>
@@ -120,12 +148,19 @@ async function load() {
     const eff = r.x && r.x < r.p ? r.x : r.p;
     // "Karsten (vendido por Karsten IO.)" vira só "Karsten"
     const m = r.l.match(/^(.+?) \(vendido por (.+)\)$/);
-    if (m && norm(m[2]).startsWith(norm(m[1]))) r.l = m[1];
+    r.store = m ? m[1] : r.l;
+    r.seller = m && !norm(m[2]).startsWith(norm(m[1])) && !/infracommerce/i.test(m[2]) ? m[2] : "";
     // mesma marca escrita diferente ("Kitchenaid" e "KitchenAid") vira um filtro só
     const bk = norm(r.b);
     if (bk) r.b = (BRAND_NAME[bk] ||= r.b);
-    return { ...r, eff, off: r.d && r.d > r.p ? (r.d - r.p) / r.d : 0, key: norm(`${r.n} ${r.b} ${r.l}`) };
+    return { ...r, eff, thyme: /creuset/i.test(r.b) && /thyme|tomilho/i.test(r.n + " " + r.u), off: r.d && r.d > r.p ? (r.d - r.p) / r.d : 0, key: norm(`${r.n} ${r.b} ${r.l}`) };
   });
+  // Preço absurdo de vendedor parceiro (ex.: cafeteira a R$ 242 mil): fora se passar de 30x a mediana da marca
+  const byBrand = {};
+  for (const r of ALL) (byBrand[r.b] ||= []).push(r.eff);
+  const med = {};
+  for (const [b, v] of Object.entries(byBrand)) { v.sort((x, y) => x - y); med[b] = v[Math.floor(v.length / 2)]; }
+  ALL = ALL.filter((r) => r.eff <= Math.max(30 * (med[r.b] || 0), 5000));
   const at = got.map((g) => new Date(g.at)).sort((a, b) => b - a)[0];
   const min = Math.max(0, Math.round((Date.now() - at) / 60000));
   $("status").textContent = `${ALL.length.toLocaleString("pt-BR")} produtos · preços de ${min < 1 ? "agora" : `${min} min atrás`} (${at.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })})`;
@@ -134,6 +169,9 @@ async function load() {
     $("cupbox").hidden = false;
     $("cups").innerHTML = cups.map((c) => `<li><b>${esc(c.l)}</b>: ${[...c.c.map((k) => `<code>${esc(k)}</code>`), esc(c.x)].filter(Boolean).join(" · ")}</li>`).join("");
   }
+  const stores = [...new Set(ALL.map((r) => r.store))].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  const cur = $("fstore").value;
+  $("fstore").innerHTML = `<option value="">Todas as lojas</option>` + stores.map((l) => `<option${l === cur ? " selected" : ""}>${esc(l)}</option>`).join("");
   drawBrands();
   render();
 }
@@ -148,9 +186,16 @@ function drawBrands() {
 
 function filtered() {
   const words = norm($("q").value).split(/\s+/).filter(Boolean);
-  let list = ALL.filter((r) => (!brand || r.b === brand) && words.every((w) => r.key.includes(w)));
+  const store = $("fstore").value, min = +$("fmin").value || 0, max = +$("fmax").value || Infinity;
+  const stock = $("fstock").checked, off = $("foff").checked, low = $("flow").checked, thyme = $("fthyme").checked;
+  $("fcount").textContent = [store, min, max !== Infinity, !stock, off, low, thyme].filter(Boolean).length || "";
+  let list = ALL.filter((r) => (!brand || r.b === brand) && words.every((w) => r.key.includes(w))
+    && (!store || r.store === store) && r.eff >= min && r.eff <= max && (!stock || r.a)
+    && (!off || r.off >= 0.05) && (!low || (r.c > r.m && r.p <= r.m)) && (!thyme || r.thyme));
   const s = $("sort").value;
-  if (s === "off") list.sort((a, b) => b.off - a.off || a.eff - b.eff);
+  if (s === "priceDesc") list.sort((a, b) => b.eff - a.eff);
+  else if (s === "name") list.sort((a, b) => a.n.localeCompare(b.n, "pt-BR"));
+  else if (s === "off") list.sort((a, b) => b.off - a.off || a.eff - b.eff);
   else if (s === "low") list.sort((a, b) => a.p / a.m - b.p / b.m || a.eff - b.eff);
   else list.sort((a, b) => b.a - a.a || a.eff - b.eff);
   return list;
@@ -170,7 +215,7 @@ function card(r, cheapest) {
   const img = r.i ? `<img src="${esc(r.i)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'noimg'}))">` : `<div class="noimg"></div>`;
   return `<article class="card${cheapest ? " best" : ""}">${img}<div>
     <p class="name">${esc(r.n)}</p>
-    <div class="meta">${esc(r.b)}${r.b ? " · " : ""}${esc(r.l)}</div>
+    <div class="meta">${esc(r.b)}${r.b ? " · " : ""}<b>${esc(r.store)}</b>${r.seller ? ` · vendido por ${esc(r.seller)}` : ""}</div>
     <div class="price"><b>${brl(r.p)}</b>${pix}${r.d > r.p ? `<s>${brl(r.d)}</s>` : ""}</div>
     <div class="hist">${hist}</div>
     ${tags.length ? `<div class="tags">${tags.join("")}</div>` : ""}
@@ -200,6 +245,13 @@ let t;
 $("q").addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { shown = PAGE; render(); }, 150); });
 $("clear").addEventListener("click", () => { $("q").value = ""; shown = PAGE; render(); $("q").focus(); });
 $("sort").addEventListener("change", () => { shown = PAGE; render(); });
+for (const id of ["fstore", "fmin", "fmax", "fstock", "foff", "flow", "fthyme"])
+  $(id).addEventListener(id.startsWith("fm") ? "input" : "change", () => { shown = PAGE; render(); });
+$("freset").addEventListener("click", () => {
+  $("fstore").value = ""; $("fmin").value = ""; $("fmax").value = "";
+  $("fstock").checked = true; $("foff").checked = $("flow").checked = $("fthyme").checked = false;
+  shown = PAGE; render();
+});
 $("more").addEventListener("click", () => { shown += PAGE; render(); });
 $("brands").addEventListener("click", (e) => {
   const b = e.target.closest(".chip"); if (!b) return;
