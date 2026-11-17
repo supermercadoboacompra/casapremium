@@ -20,13 +20,24 @@ Mozart, Breville, Ninja, Zojirushi, Cuisinart (só acima de R$ 500) e Dyson. A l
 | trousseau.com.br (oficial) | todo o catálogo Trousseau |
 | altenburg.com.br (oficial) | catálogo Altenburg (1x por hora) |
 | lazershop.com.br | Wüsthof, Peugeot, Zwilling, Staub, Schott Zwiesel, Bialetti (a cada 15 min) |
-| americanas.com.br | só produtos das marcas acima (1x por hora) |
+| americanas.com.br | só produtos das marcas acima (1x por hora) + TVs Samsung 55" (a cada rodada, inclusive vendidas por Magalu, Fast Shop e Colombo) |
+| kabum.com.br | TVs Samsung 55" |
 | spicy.com.br | só produtos das marcas acima |
 | letseatit.com.br | só produtos das marcas acima |
 | cookstore.com.br | só produtos das marcas acima |
 
 Fora por enquanto: Amazon, Magalu, Casas Bahia, Mercado Livre, Camicado, Westwing, Tok&Stok e os sites próprios de
 Zwilling, Vista Alegre, Nespresso, Riedel e Dyson bloqueiam robôs ou não abrem o catálogo. Bialetti (site próprio) estava fora do ar.
+
+## TV Samsung 55"
+
+Qualquer modelo de 55" (Crystal, QLED, Neo QLED/Mini LED, OLED, The Frame, Micro RGB), sem acessórios.
+O resumo das 9h mostra a mais barata de cada tipo. Para acompanhar outro produto assim, é só criar outra linha em `WATCHES` no `bot.mjs`.
+
+## Lojas que rodam no PC
+
+Smeg e Lazer Shop bloqueiam os servidores do GitHub. Elas rodam pela pasta `Desktop/Claude/casapremium-local`
+(agendador do Windows, a cada 15 min, só com o PC ligado). O token do Telegram fica em `config.cmd` nessa pasta, fora do repositório.
 
 ## Quando chega um alerta
 

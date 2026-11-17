@@ -58,6 +58,8 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TEST_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.test_only }}
           DIGEST: ${{ github.event_name == 'workflow_dispatch' && inputs.resumo }}
+          # Smeg e Lazer Shop bloqueiam os servidores do GitHub: rodam no PC (casapremium-local)
+          SKIP: smeg,lazershop
         run: node bot.mjs
 
       - name: Guardar histórico de preços

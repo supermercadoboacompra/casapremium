@@ -17,7 +17,8 @@ const DRY_RUN = process.env.DRY_RUN === "true" || !TOKEN || !CHAT_ID;
 const FORCE_DIGEST = process.env.DIGEST === "true"; // manda o resumo do dia agora
 const ONLY = (process.env.ONLY || "").split(",").map((s) => s.trim()).filter(Boolean);
 
-const STATE_FILE = "state.json.gz";
+const STATE_FILE = process.env.STATE_FILE || "state.json.gz";
+const SKIP = (process.env.SKIP || "").split(",").map((s) => s.trim()).filter(Boolean);
 const EXTRA_CSV = "products.csv";
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
@@ -57,6 +58,9 @@ const STORES = [
   { id: "altenburg", name: "Altenburg", type: "vtex", host: "https://www.altenburg.com.br", heavy: true },
   // multimarcas: só os produtos das marcas em BRANDS (Americanas busca marca por marca: 1x por hora)
   { id: "americanas", name: "Americanas", type: "vtexBrands", host: "https://www.americanas.com.br", heavy: true, skipBrands: ["Peugeot"] },
+  // eletro: só os WATCHES (TVs Samsung 55"); a Americanas traz também Magalu, Fast Shop e Colombo como vendedores
+  { id: "americanastv", name: "Americanas", type: "vtexWatch", host: "https://www.americanas.com.br" },
+  { id: "kabum", name: "Kabum", type: "kabum" },
   { id: "spicy", name: "Spicy", type: "vtexBrands", host: "https://www.spicy.com.br" },
   { id: "letseatit", name: "Lets Eat It", type: "shopify", host: "https://letseatit.com.br" },
   { id: "cookstore", name: "Cook Store", type: "woo", host: "https://cookstore.com.br", brands: ["Le Creuset"] },
@@ -85,8 +89,18 @@ const minPriceFor = (brand) => {
 };
 
 // Anotações: destacam peças de interesse no alerta e furam a fila do resumo.
+// Produtos específicos acompanhados em lojas de eletro (qualquer marca da loja)
+const isSamsungTv55 = (name) =>
+  /samsung/i.test(name) && /\btv\b/i.test(name) &&
+  /\b55\s*("|”|''|pol)|\b(qn|un|ls|mrn|lh)55[a-z]/i.test(name) &&
+  !/suporte|controle|capa|cabo|pel[ií]cula|antena|soundbar|\bkit\b/i.test(name);
+const WATCHES = [
+  { label: "📺 TV Samsung 55\"", query: "smart tv samsung 55", kabum: "tv-samsung-55", match: isSamsungTv55, minPrice: 1500 },
+];
+
 const NOTES = [
   { label: "🌿 Cor Thyme", match: (r) => /creuset/i.test(r.brand) && /thyme|tomilho/i.test(`${r.name} ${r.url}`) },
+  ...WATCHES.map((w) => ({ label: w.label, match: (r) => w.match(r.name) })),
 ];
 
 // ---------- utilidades ----------
@@ -228,6 +242,7 @@ async function readVtex(store) {
     for (const p of page || []) {
       // multimarcas: a marca pode vir no campo da marca ou só no nome (vendedores de fora usam "Não Disponível")
       if (store.onlyBrands && !store.onlyBrands.some((b) => norm(b) === norm(p.brand))) continue;
+      if (store.keepRx && !store.keepRx(p.productName)) continue;
       if (store.keepBrand && TOY_RX.test(p.productName)) continue;
       if (store.keepBrand) {
         const byBrand = norm(p.brand).includes(norm(store.keepBrand));
@@ -237,7 +252,7 @@ async function readVtex(store) {
       for (const it of p.items || []) {
         // menor preço entre os vendedores com estoque
         const offer = (it.sellers || [])
-          .map((s) => s.commertialOffer)
+          .map((s) => s.commertialOffer && { ...s.commertialOffer, seller: s.sellerName })
           .filter((o) => o && o.Price > 0 && o.AvailableQuantity > 0)
           .sort((a, b) => a.Price - b.Price)[0];
         if (!offer) continue;
@@ -262,6 +277,7 @@ async function readVtex(store) {
           listPrice: offer.ListPrice > offer.Price ? offer.ListPrice : null,
           pix: pix > 0 && pix < offer.Price ? pix : null,
           available: offer.AvailableQuantity > 0,
+          seller: offer.seller,
         });
       }
     }
@@ -491,6 +507,47 @@ async function readLazer(store) {
   return [...out.values()];
 }
 
+// Lojas de eletro (VTEX): só os produtos dos WATCHES (ex.: TVs Samsung 55")
+async function readVtexWatch(store) {
+  const out = new Map();
+  for (const w of WATCHES) {
+    const rows = await readVtex({ ...store, ft: w.query, keepRx: w.match, cap: 250 });
+    for (const r of rows) if (r.price >= (w.minPrice || 0)) out.set(r.key, r);
+  }
+  return [...out.values()];
+}
+
+// Kabum: a busca traz os produtos com preço, preço no Pix e estoque
+async function readKabum(store) {
+  const out = new Map();
+  for (const w of WATCHES.filter((x) => x.kabum)) {
+    for (let page = 1; page <= 3; page++) {
+      const { body } = await get(`https://www.kabum.com.br/busca/${w.kabum}?page_number=${page}&page_size=100`);
+      const m = body.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+      if (!m) break;
+      let data = JSON.parse(m[1]).props?.pageProps?.data;
+      if (typeof data === "string") data = JSON.parse(data);
+      const list = data?.catalogServer?.data || [];
+      let fresh = 0;
+      for (const p of list) {
+        if (!w.match(p.name) || !p.available || !(p.price > 0) || p.price < (w.minPrice || 0)) continue;
+        const key = `${store.id}:${p.code}`;
+        if (!out.has(key)) fresh++;
+        out.set(key, {
+          key, brand: p.manufacturer?.name || "Samsung", name: p.name,
+          url: `https://www.kabum.com.br/produto/${p.code}/${p.friendlyName}`,
+          image: p.image || p.thumbnail, price: p.price,
+          listPrice: p.oldPrice > p.price ? p.oldPrice : null,
+          pix: p.priceWithDiscount > 0 && p.priceWithDiscount < p.price ? p.priceWithDiscount : null,
+          available: true, seller: p.sellerName && !/kabum/i.test(p.sellerName) ? p.sellerName : null,
+        });
+      }
+      if (!fresh || list.length < 50) break;
+    }
+  }
+  return [...out.values()];
+}
+
 // Links avulsos do products.csv (qualquer loja que publique o preço no padrão schema.org)
 async function readExtras() {
   if (!fs.existsSync(EXTRA_CSV)) return [];
@@ -544,7 +601,7 @@ async function readCoupons(store) {
   return { codes: [...codes].map(([code, text]) => ({ code, text })), pix: pixMatch ? `${pixMatch[1]}% de desconto no Pix` : null };
 }
 
-const READERS = { vtex: readVtex, vtexBrands: readVtexBrands, lazer: readLazer, shopify: readShopify, woo: readWoo, sfcc: readSfcc, magazord: readMagazord, wake: readWake };
+const READERS = { vtex: readVtex, vtexBrands: readVtexBrands, vtexWatch: readVtexWatch, kabum: readKabum, lazer: readLazer, shopify: readShopify, woo: readWoo, sfcc: readSfcc, magazord: readMagazord, wake: readWake };
 
 // ---------- histórico ----------
 // state.items[key] = { b, n, u, i, s, h: [[dia, preço], ...] (só quando o preço muda), a: preço do último aviso }
@@ -658,6 +715,7 @@ function productEmoji(name) {
     [/caneca|xícara|xicara|cafeteira|espresso|café|cafe/, "☕"],
     [/prato|travessa|bowl|tigela|ramekin|molheira|manteigueira|jogo de jantar|louça|louca/, "🍽️"],
     [/batedeira|liquidificador|processador|mixer|fritadeira|air ?fryer|torradeira|forno|panela de arroz|sorveteira/, "⚙️"],
+    [/\btv\b|televis/, "📺"],
     [/aspirador|secador|modelador/, "🌀"],
     [/lençol|lencol|jogo de cama|edredom|colcha|fronha|travesseiro|duvet|cobre.?leito|manta/, "🛏️"],
     [/toalha de (banho|rosto|piso)|toalha banh|roupão|roupao|tapete de banho/, "🛁"],
@@ -757,6 +815,22 @@ async function sendDailyDigest(state, nowDay) {
     thyme.slice(0, 25).map((r) => block(r)).concat(thyme.length > 25 ? [`… e mais ${thyme.length - 25}.`] : [])
   );
 
+  // Produtos acompanhados (ex.: TVs Samsung 55"): o mais barato de cada tipo hoje
+  for (const w of WATCHES) {
+    const items = live.filter((r) => w.match(r.n)).sort((a, b) => (a.px || a.p) - (b.px || b.p));
+    if (!items.length) continue;
+    const kind = (n) =>
+      /micro ?rgb/i.test(n) ? "Micro RGB" : /oled/i.test(n) ? "OLED" : /neo ?qled/i.test(n) ? "Neo QLED" :
+      /frame/i.test(n) ? "The Frame" : /mini ?led/i.test(n) ? "Mini LED" : /qled/i.test(n) ? "QLED" :
+      /business|lh55/i.test(n) ? "Business" : "Crystal UHD";
+    const best = new Map();
+    for (const r of items) if (!best.has(kind(r.n))) best.set(kind(r.n), r);
+    await sendBlocks(
+      `${w.label} <b>— o mais barato de cada tipo hoje</b> (${items.length} ofertas acompanhadas)`,
+      [...best].map(([k, r]) => `<b>${esc(k)}</b>\n` + block(r))
+    );
+  }
+
   const disc = live
     .filter((r) => r.lp && r.p >= minPriceFor(r.b))
     .map((r) => ({ ...r, off: ((r.lp - r.p) / r.lp) * 100 }))
@@ -818,7 +892,7 @@ async function main() {
   const due = (key, everyMin) => ONLY.length || !state.lastRead[key] || Date.now() - state.lastRead[key] >= everyMin * 60000 - 120000;
   const newCoupons = [];
 
-  const stores = ONLY.length ? STORES.filter((s) => ONLY.includes(s.id)) : STORES;
+  const stores = (ONLY.length ? STORES.filter((s) => ONLY.includes(s.id)) : STORES).filter((s) => !SKIP.includes(s.id));
   for (const store of stores) {
     // Cupons no site da loja (1x por hora)
     if (due(`cupom:${store.id}`, RULES.couponsEveryMin)) {
@@ -846,7 +920,8 @@ async function main() {
       if (store.runColors) state.lastRead[`${store.id}:cores`] = Date.now();
       for (const row of rows) {
         row.store = store.id;
-        row.storeName = store.name;
+        row.storeName = row.seller && brandKey(row.seller) !== brandKey(store.name) && !/americanas/i.test(row.seller)
+          ? `${store.name} (vendido por ${row.seller})` : store.name;
         const a = evaluate(state, row, nowDay, todayIso);
         if (a) alerts.push(a);
       }
@@ -878,7 +953,7 @@ async function main() {
   state.runs = (state.runs || 0) + 1;
   saveState(state); // salva antes de enviar: se o Telegram falhar, não repete avisos em massa
 
-  if (firstRun) {
+  if (firstRun && !ONLY.length) {
     await tg("sendMessage", {
       text:
         `✅ <b>Casa Premium ligado</b>\n\nAgora monitorando:\n${esc(summary.join("\n"))}\n\n` +
