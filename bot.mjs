@@ -626,12 +626,14 @@ function exportCatalog(state, nowDay, file) {
   const items = [];
   for (const r of Object.values(state.items)) {
     if (!r.p || r.d < nowDay - 1) continue;
+    if (r.s && !STORES.some((x) => x.id === r.s)) continue; // loja removida (ex.: Oxford)
+    if (/garantia estendida|seguro/i.test(r.n) || /seguradora|oxford/i.test(r.b)) continue; // Oxford: "não é premium"
     const k = `${r.s}|${r.n}|${r.p}`;
     if (seen.has(k)) continue;
     seen.add(k);
     const prices = (r.h || []).map((x) => x[1]);
     items.push({
-      b: r.b || "", n: r.n, u: r.u, i: r.i || "", l: r.sn || r.s || "",
+      b: /^n[aã]o dispon/i.test(r.b || "") ? "" : r.b || "", n: r.n, u: r.u, i: r.i || "", l: r.sn || r.s || "",
       p: r.p, x: r.px || 0, d: r.lp || 0, a: r.av === false ? 0 : 1,
       m: prices.length ? Math.min(...prices) : r.p, c: prices.length ? Math.max(...prices) : r.p,
       s: r.h?.[0]?.[0] || nowDay, v: r.d,
