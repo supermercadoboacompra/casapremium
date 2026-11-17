@@ -14,6 +14,7 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
 const TEST_ONLY = process.env.TEST_ONLY === "true";
 const DRY_RUN = process.env.DRY_RUN === "true" || !TOKEN || !CHAT_ID;
+const FORCE_DIGEST = process.env.DIGEST === "true"; // manda o resumo do dia agora
 const ONLY = (process.env.ONLY || "").split(",").map((s) => s.trim()).filter(Boolean);
 
 const STATE_FILE = "state.json.gz";
@@ -243,7 +244,7 @@ async function readSfcc(store) {
     const price = num(d.price);
     if (!price || !d.id) continue;
     // cada cor é acompanhada separado (ex.: Thyme, Vermelho)
-    const color = (d.productVariant || "").trim();
+    const color = /not set/i.test(d.productVariant || "") ? "" : (d.productVariant || "").trim();
     const key = `${store.id}:${d.id}${color ? ":" + color.toLowerCase() : ""}`;
     if (out.has(key)) continue;
     const link = store.base + decodeHtml(m[2]);
@@ -497,7 +498,10 @@ function usualPrice(h, nowDay) {
 
 function evaluate(state, row, nowDay, todayIso) {
   const rec = (state.items[row.key] ||= { h: [] });
-  Object.assign(rec, { b: row.brand, n: row.name, u: row.url, i: row.image, s: row.store });
+  Object.assign(rec, {
+    b: row.brand, n: row.name, u: row.url, i: row.image, s: row.store, sn: row.storeName,
+    lp: row.listPrice || null, px: row.pix || null, p: row.price, av: row.available, d: nowDay,
+  });
   const h = rec.h;
   const last = h.length ? h[h.length - 1] : null;
   const isNew = !last;
@@ -601,6 +605,54 @@ async function sendDigest(list, title) {
     msg += line;
   }
   if (msg.trim()) await tg("sendMessage", { text: msg, disable_web_page_preview: true });
+}
+
+// Resumo diário: peças Thyme em estoque, maiores descontos anunciados pelas lojas e cupons.
+async function sendDailyDigest(state, nowDay) {
+  // mesma peça pode entrar 2x (vitrine + busca por cor): fica uma por loja/nome/preço
+  const seen = new Set();
+  const live = Object.values(state.items)
+    .filter((r) => r.d >= nowDay - 1 && r.av !== false && r.p)
+    .filter((r) => {
+      const k = `${r.s}|${r.n}|${r.p}`;
+      return !seen.has(k) && seen.add(k);
+    });
+  const perStore = (list, n) => {
+    const c = {};
+    return list.filter((r) => (c[r.s] = (c[r.s] || 0) + 1) <= n);
+  };
+  const total = live.length;
+  const line = (r, extra = "") =>
+    `\n• <a href="${esc(r.u)}">${esc(r.n.slice(0, 75))}</a> — <b>${brl(r.p)}</b>${r.px ? ` (Pix ${brl(r.px)})` : ""} · ${esc(r.sn || r.s)}${extra}`;
+
+  const thyme = live
+    .filter((r) => /creuset/i.test(r.b) && /thyme|tomilho/i.test(`${r.n} ${r.u}`) && r.p >= RULES.minPrice)
+    .sort((a, b) => a.p - b.p);
+  let msg = `<b>Resumo do dia — Casa Premium</b>\n${total.toLocaleString("pt-BR")} produtos acompanhados agora.`;
+  msg += `\n\n<b>🌿 Le Creuset Thyme em estoque (${thyme.length})</b>`;
+  for (const r of thyme.slice(0, 25)) msg += line(r);
+  if (thyme.length > 25) msg += `\n… e mais ${thyme.length - 25}.`;
+  await tg("sendMessage", { text: msg, disable_web_page_preview: true });
+
+  const disc = live
+    .filter((r) => r.lp && r.p >= RULES.minPrice)
+    .map((r) => ({ ...r, off: ((r.lp - r.p) / r.lp) * 100 }))
+    .filter((r) => r.off >= 20)
+    .sort((a, b) => b.off - a.off);
+  let msg2 = `<b>Maiores descontos anunciados pelas lojas hoje</b>\n(é o "de/por" da própria loja; o bot ainda está montando o histórico para conferir)`;
+  for (const r of perStore(disc, 3).slice(0, 15)) msg2 += line(r, ` · de ${brl(r.lp)} (−${r.off.toFixed(0)}%)`);
+  if (!disc.length) msg2 += "\nNenhum acima de 20%.";
+
+  const cup = STORES.filter((s) => state.coupons?.[s.id]?.codes.length || state.coupons?.[s.id]?.pix);
+  if (cup.length) {
+    msg2 += `\n\n<b>Cupons e descontos anunciados nos sites</b>`;
+    for (const s of cup) {
+      const c = state.coupons[s.id];
+      const parts = [...c.codes.map((k) => `<code>${esc(k.code)}</code> (${esc(k.text.slice(0, 90))})`), c.pix ? esc(c.pix) : ""].filter(Boolean);
+      msg2 += `\n• ${esc(s.name)}: ${parts.join(" · ")}`;
+    }
+  }
+  await tg("sendMessage", { text: msg2, disable_web_page_preview: true });
 }
 
 // ---------- principal ----------
@@ -715,6 +767,14 @@ async function main() {
   }
 
   for (const a of alerts) a.coupons = state.coupons[a.store];
+
+  // Resumo do dia (1x por dia a partir das 9h de Brasília, ou quando pedido)
+  const brtHour = (new Date().getUTCHours() + 21) % 24;
+  if (!ONLY.length && (FORCE_DIGEST || (brtHour >= 9 && state.lastDigest !== todayIso))) {
+    await sendDailyDigest(state, nowDay);
+    state.lastDigest = todayIso;
+    saveState(state);
+  }
 
   // Cupom novo apareceu no site de uma loja
   if (newCoupons.length && !firstRun) {

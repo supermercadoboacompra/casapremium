@@ -31,6 +31,7 @@ Fora por enquanto: Amazon, Magalu, Casas Bahia, Mercado Livre e Camicado bloquei
 
 O "de/por" da loja sozinho **não** gera alerta, para não cair em desconto de mentira.
 Produtos abaixo de R$ 100 (peças, acessórios) são ignorados. Cada produto só é avisado de novo se cair mais 3%.
+Todo dia às 9h chega um **resumo**: peças Le Creuset Thyme em estoque com preço, os maiores descontos anunciados pelas lojas (até 3 por loja) e os cupons dos sites.
 Em rodadas com muitas quedas, as 12 maiores vêm com foto e o resto num resumo.
 
 Peças Le Creuset na cor **Thyme** vêm marcadas com "🌿 Cor Thyme" e passam na frente.
