@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       test_only:
-        description: "Testar Telegram"
+        description: "Testar somente o Telegram"
         required: true
         type: boolean
         default: true
@@ -13,7 +13,11 @@ on:
     - cron: "17 */6 * * *"
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: casa-premium
+  cancel-in-progress: false
 
 jobs:
   monitor:
@@ -25,6 +29,14 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Restaurar histórico
+        uses: actions/cache@v4
+        with:
+          path: prices.sqlite3
+          key: casa-premium-${{ github.run_id }}
+          restore-keys: |
+            casa-premium-
+
       - name: Instalar dependências
         run: pip install -r requirements.txt
 
@@ -32,5 +44,5 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TEST_ONLY: ${{ inputs.test_only || false }}
+          TEST_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.test_only || false }}
         run: python bot.py
