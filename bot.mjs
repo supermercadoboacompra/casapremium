@@ -36,7 +36,9 @@ const RULES = {
 const STORES = [
   { id: "lecreuset", name: "Le Creuset", type: "sfcc", brand: "Le Creuset",
     url: "https://www.lecreuset.com.br/on/demandware.store/Sites-LeCreuset_BR-Site/pt_BR/Search-UpdateGrid?cgid=root&start=0&sz=1000",
-    base: "https://www.lecreuset.com.br" },
+    base: "https://www.lecreuset.com.br",
+    variation: "https://www.lecreuset.com.br/on/demandware.store/Sites-LeCreuset_BR-Site/pt_BR/Product-Variation",
+    colors: ["Thyme"] }, // cores anotadas: cada peça nessa cor é acompanhada separado
   { id: "smeg", name: "Smeg Brasil", type: "magazord", brand: "Smeg",
     sitemap: "https://www.smegbrasil.com.br/sitemap-produto.xml" },
   { id: "kitchenaid", name: "KitchenAid", type: "vtex", host: "https://www.kitchenaid.com.br" },
@@ -52,6 +54,11 @@ const STORES = [
 ];
 
 const BRANDS = ["Le Creuset", "Smeg", "KitchenAid", "Karsten", "Trussardi", "Buddemeyer"];
+
+// Anotações: destacam peças de interesse no alerta e furam a fila do resumo.
+const NOTES = [
+  { label: "🌿 Cor Thyme", match: (r) => /creuset/i.test(r.brand) && /thyme|tomilho/i.test(`${r.name} ${r.url}`) },
+];
 
 // ---------- utilidades ----------
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -96,8 +103,18 @@ async function pool(items, size, fn) {
   return out;
 }
 
-const decodeHtml = (s) =>
-  s.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+const ENT = { quot: '"', amp: "&", lt: "<", gt: ">", nbsp: " ", ordm: "º", ordf: "ª", deg: "°" };
+const ACC = { acute: "́", grave: "̀", tilde: "̃", circ: "̂", cedil: "̧", uml: "̈" };
+const decodeHtml = (s) => {
+  for (let i = 0; i < 2; i++) // duas vezes: alguns sites mandam "&amp;ccedil;"
+    s = s.replace(/&(#\d+|#x[\da-f]+|[a-z]+);/gi, (m, e) => {
+      if (e[0] === "#") return String.fromCodePoint(e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10));
+      if (ENT[e]) return ENT[e];
+      const k = Object.keys(ACC).find((a) => e.length === a.length + 1 && e.endsWith(a));
+      return k ? (e[0] + ACC[k]).normalize("NFC") : m;
+    });
+  return s;
+};
 
 const num = (v) => {
   if (v == null) return null;
@@ -215,13 +232,16 @@ async function readSfcc(store) {
     }
     const price = num(d.price);
     if (!price || !d.id) continue;
-    const key = `${store.id}:${d.id}`;
+    // cada cor é acompanhada separado (ex.: Thyme, Vermelho)
+    const color = (d.productVariant || "").trim();
+    const key = `${store.id}:${d.id}${color ? ":" + color.toLowerCase() : ""}`;
     if (out.has(key)) continue;
+    const link = store.base + decodeHtml(m[2]);
     out.set(key, {
       key,
       brand: d.brand || store.brand,
-      name: d.name,
-      url: store.base + decodeHtml(m[2]),
+      name: decodeHtml(d.name) + (color ? ` — ${color}` : ""),
+      url: color ? `${link}${link.includes("?") ? "&" : "?"}dwvar_${d.id}_color=${encodeURIComponent(color)}` : link,
       image: d.image ? decodeHtml(d.image) : null,
       price,
       listPrice: num(d.listPrice) > price ? num(d.listPrice) : null,
@@ -229,6 +249,41 @@ async function readSfcc(store) {
     });
   }
   if (out.size === 0) throw new Error("nenhum produto lido");
+
+  // A vitrine só mostra a cor padrão. Para as cores anotadas (ex.: Thyme), busca a cor
+  // no site e pergunta o preço daquela cor produto por produto.
+  for (const color of store.colors || []) {
+    try {
+      const { body } = await get(`${store.base}/search?q=${encodeURIComponent(color)}&sz=500`);
+      const pids = [...new Set([...body.matchAll(/data-impressiondata="([^"]+)"/g)]
+        .map((m) => { try { return JSON.parse(decodeHtml(m[1])).id; } catch { return null; } })
+        .filter(Boolean))];
+      const rows = await pool(pids, 3, async (pid) => {
+        const { body: j } = await get(
+          `${store.variation}?pid=${pid}&dwvar_${pid}_color=${encodeURIComponent(color)}&quantity=1`, { json: true, tries: 2 });
+        const p = j.product;
+        const sel = (p?.variationAttributes || []).find((a) => a.id === "color")?.values?.find((v) => v.selected);
+        if (!p || !sel || sel.value.toLowerCase() !== color.toLowerCase()) return null; // não tem essa cor
+        const price = p.price?.sales?.value ?? p.price?.min?.sales?.value;
+        if (!price) return null;
+        const list = p.price?.list?.value;
+        return {
+          key: `${store.id}:${pid}:${color.toLowerCase()}`,
+          brand: store.brand,
+          name: `${decodeHtml(p.productName)} — ${color}`,
+          url: store.base + p.selectedProductUrl.replace(/&quantity=1$/, ""),
+          image: p.images?.large?.[0]?.url,
+          price,
+          listPrice: list > price ? list : null,
+          available: p.available !== false,
+        };
+      });
+      for (const r of rows.filter(Boolean)) out.set(r.key, r);
+      console.log(`  ${store.name}: ${rows.filter(Boolean).length} peças na cor ${color}`);
+    } catch (e) {
+      console.log(`  ${store.name}: falha ao buscar cor ${color}: ${e.message}`);
+    }
+  }
   return [...out.values()];
 }
 
@@ -438,7 +493,8 @@ function evaluate(state, row, nowDay, todayIso) {
 
   rec.a = row.price;
   rec.at = todayIso;
-  return { ...row, usual, prevMin, drop, reasons };
+  const notes = NOTES.filter((n) => n.match(row)).map((n) => n.label);
+  return { ...row, usual, prevMin, drop, reasons, notes };
 }
 
 // ---------- Telegram ----------
@@ -460,17 +516,16 @@ async function tg(method, payload) {
   await sleep(1200); // respeita o limite de mensagens do Telegram
 }
 
+// Tom neutro: só os fatos (preço, comparação, loja). Nada de "imperdível".
 function alertText(a) {
-  const lines = [
-    `🔥 <b>${esc(a.brand)}</b> — ${esc(a.name)}`,
-    "",
-    `💰 <b>${brl(a.price)}</b>`,
-  ];
-  if (a.usual && a.usual > a.price) lines.push(`Preço de costume: <s>${brl(a.usual)}</s> (−${a.drop.toFixed(0)}%)`);
-  if (a.prevMin && a.prevMin > a.price) lines.push(`Menor visto antes: ${brl(a.prevMin)}`);
-  lines.push(`📌 ${esc(a.reasons.join(" · "))}`);
-  lines.push(`🏬 ${esc(a.storeName)}`);
-  lines.push("", `<a href="${esc(a.url)}">Abrir na loja</a>`);
+  const lines = [`<b>${esc(a.brand)}</b> — ${esc(a.name)}`];
+  if (a.notes.length) lines.push(esc(a.notes.join(" · ")));
+  lines.push("", `Preço agora: <b>${brl(a.price)}</b>`);
+  if (a.usual && a.usual > a.price) lines.push(`Preço de costume: ${brl(a.usual)} (−${a.drop.toFixed(0)}%)`);
+  if (a.prevMin && a.prevMin > a.price) lines.push(`Menor preço visto antes: ${brl(a.prevMin)}`);
+  lines.push(`Motivo: ${esc(a.reasons.join("; "))}`);
+  lines.push(`Loja: ${esc(a.storeName)}`);
+  lines.push("", `<a href="${esc(a.url)}">Ver na loja</a> · confira frete e estoque`);
   return lines.join("\n");
 }
 
@@ -490,7 +545,7 @@ async function sendDigest(list, title) {
   // Telegram aceita até 4096 caracteres por mensagem
   let msg = `<b>${esc(title)}</b>\n`;
   for (const a of list) {
-    const line = `\n• <a href="${esc(a.url)}">${esc(a.brand)} — ${esc(a.name.slice(0, 70))}</a>: <b>${brl(a.price)}</b>${a.drop ? ` (−${a.drop.toFixed(0)}%)` : ""}`;
+    const line = `\n• <a href="${esc(a.url)}">${esc(a.brand)} — ${esc(a.name.slice(0, 70))}</a>: <b>${brl(a.price)}</b>${a.drop ? ` (−${a.drop.toFixed(0)}%)` : ""}${a.notes.length ? " " + esc(a.notes.join(" ")) : ""}`;
     if (msg.length + line.length > 3900) {
       await tg("sendMessage", { text: msg, disable_web_page_preview: true });
       msg = "";
@@ -565,7 +620,8 @@ async function main() {
     });
   }
 
-  alerts.sort((x, y) => y.drop - x.drop);
+  // anotados (ex.: Thyme) primeiro, depois as maiores quedas
+  alerts.sort((x, y) => y.notes.length - x.notes.length || y.drop - x.drop);
   const singles = alerts.slice(0, RULES.maxSinglePerRun);
   const extra = alerts.slice(RULES.maxSinglePerRun);
   for (const a of singles) {
