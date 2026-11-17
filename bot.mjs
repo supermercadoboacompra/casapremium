@@ -83,7 +83,22 @@ const BRANDS = [
   "Staub", "Zwilling", "Riedel", "Spiegelau", "Schott Zwiesel", "Vista Alegre", "Emile Henry",
   "Wolff", "Laguiole", "Mozart", "Breville", "Wüsthof",
   "Ninja", "Zojirushi", "Cuisinart", "Dyson", "Peugeot",
+  // lista do usuário "marcas premium para montar a casa" (17/11/2026)
+  "Demeyere", "Victorinox", "Global", "Villeroy & Boch", "Rosenthal", "Porto Brasil", "Braun",
+  "Liebherr", "Fisher & Paykel", "Bosch", "Samsung Bespoke", "Electrolux",
+  "Kacyumara", "Nachtmann", "Bohemia", "Joseph Joseph", "Brabantia", "OXO", "Simplehuman",
 ];
+
+// Marcas grandes demais: só a categoria que interessa (sem furadeira Bosch, mochila Victorinox, cerveja Bohemia...)
+const GELADEIRA = /geladeira|refrigerador|freezer|frigobar|adega|french door|side by side|cervejeira/i;
+const BRAND_SPEC = {
+  Bosch: { keep: GELADEIRA }, Electrolux: { keep: GELADEIRA }, Liebherr: { keep: GELADEIRA }, "Fisher & Paykel": { keep: GELADEIRA },
+  "Samsung Bespoke": { brand: "Samsung", keep: (n) => /bespoke/i.test(n) && GELADEIRA.test(n) },
+  Victorinox: { keep: /faca|cutelo|tesoura|chaira|amolador|santoku|trinchante/i },
+  Global: { keep: /faca|cutelo|santoku|chaira|amolador/i },
+  Bohemia: { keep: /ta[cç]a|copo|jarra|decanter|cristal|licoreira|balde|fruteira/i },
+  Braun: { keep: /mixer|liquidificador|processador|cafeteira|chaleira|torradeira|espremedor|batedeira|multiquick|fritadeira/i },
+};
 
 // Brinquedos com nome parecido (Lego Ninjago, Tartarugas Ninja) não entram
 const TOY_RX = /lego|ninjago|tartaruga|turtles|boneco|brinquedo|fantasia|pel[uú]cia/i;
@@ -220,7 +235,9 @@ function findProduct(node) {
 async function readVtexBrands(store) {
   const out = new Map();
   for (const brand of BRANDS.filter((b) => !(store.skipBrands || []).includes(b))) {
-    const rows = await readVtex({ ...store, ft: brand, keepBrand: brand, cap: store.cap || 500 });
+    const spec = BRAND_SPEC[brand] || {};
+    const keep = spec.keep && (typeof spec.keep === "function" ? spec.keep : (n) => spec.keep.test(n));
+    const rows = await readVtex({ ...store, ft: brand, keepBrand: spec.brand || brand, keepRx: keep || store.keepRx, cap: store.cap || 500 });
     for (const r of rows) out.set(r.key, r);
   }
   return [...out.values()];
