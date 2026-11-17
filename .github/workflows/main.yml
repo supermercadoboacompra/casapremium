@@ -39,6 +39,8 @@ jobs:
         run: echo "START=$(date +%s)" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false # o token só aparece no passo que publica a lista
 
       - uses: actions/setup-node@v4
         with:

@@ -97,6 +97,7 @@ const $ = (id) => document.getElementById(id);
 const brl = (v) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const norm = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 const day = (n) => new Date(n * 86400000).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "UTC" });
+const safeUrl = (u) => { try { const x = new URL(u); return /^https?:$/.test(x.protocol) ? x.href : ""; } catch { return ""; } };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 let ALL = [], brand = "", shown = PAGE;
@@ -105,7 +106,7 @@ async function load() {
   const res = await Promise.allSettled(SOURCES.map((u) => fetch(u + "?t=" + Math.floor(Date.now() / 120000)).then((r) => (r.ok ? r.json() : null))));
   const got = res.map((r) => (r.status === "fulfilled" ? r.value : null)).filter(Boolean);
   if (!got.length) { $("status").textContent = "Não consegui carregar a lista agora. Tente de novo em alguns minutos."; return; }
-  ALL = got.flatMap((g) => g.items).map((r) => {
+  ALL = got.flatMap((g) => g.items).map((r) => ({ ...r, u: safeUrl(r.u), i: safeUrl(r.i) })).filter((r) => r.u).map((r) => {
     const eff = r.x && r.x < r.p ? r.x : r.p;
     // "Karsten (vendido por Karsten IO.)" vira só "Karsten"
     const m = r.l.match(/^(.+?) \(vendido por (.+)\)$/);
