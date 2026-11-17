@@ -51,7 +51,7 @@ As regras ficam no começo do `bot.mjs` (bloco `RULES`) e a lista de marcas em `
 
 ## Como roda
 
-GitHub Actions, **a cada 5 minutos** (o mínimo do GitHub), sem depender de computador ligado.
+GitHub Actions, **a cada ~5 minutos**: cada rodada dispara a próxima ao terminar (o agendamento do GitHub fica só de reserva, a cada 30 min, porque ele atrasa ou pula intervalos curtos), sem depender de computador ligado.
 Smeg (425 páginas) e as peças Thyme do site oficial Le Creuset são lidas 1x por hora; cupons também 1x por hora.
 
 **O repositório precisa ser público** para rodar a cada 5 minutos de graça
