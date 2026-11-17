@@ -63,6 +63,10 @@ const STORES = [
   { id: "americanastv", name: "Americanas", type: "vtexWatch", host: "https://www.americanas.com.br" },
   { id: "kabum", name: "Kabum", type: "kabum" },
   { id: "spicy", name: "Spicy", type: "vtexBrands", host: "https://www.spicy.com.br" },
+  // adicionadas em 17/11/2026 (multimarcas VTEX que liberam a busca; 1x por hora)
+  { id: "fastshop", name: "Fast Shop", type: "vtexBrands", host: "https://site.fastshop.com.br", heavy: true, skipBrands: ["Peugeot"] },
+  { id: "casaevideo", name: "Casa & Video", type: "vtexBrands", host: "https://www.casaevideo.com.br", heavy: true, skipBrands: ["Peugeot"] },
+  { id: "zwilling", name: "Zwilling", type: "vtex", host: "https://www.zwilling.com.br" },
   { id: "letseatit", name: "Lets Eat It", type: "shopify", host: "https://letseatit.com.br" },
   { id: "cookstore", name: "Cook Store", type: "woo", host: "https://cookstore.com.br", brands: ["Le Creuset"] },
 ];
@@ -619,6 +623,13 @@ function saveState(state) {
   fs.writeFileSync(STATE_FILE, zlib.gzipSync(JSON.stringify(state)));
 }
 
+// Marca com a grafia da lista BRANDS ("LE CREUSET" e "Zwilling J A Henckels" viram "Le Creuset" e "Zwilling")
+const canonBrand = (b) => {
+  if (!b || /^n[aã]o dispon/i.test(b)) return "";
+  const k = brandKey(b);
+  return BRANDS.find((x) => k.includes(brandKey(x))) || b;
+};
+
 // Catálogo para o site (docs/): produtos vistos nos últimos 2 dias, com preço e histórico resumido.
 // Campos curtos para o arquivo ficar leve no celular.
 function exportCatalog(state, nowDay, file) {
@@ -633,7 +644,7 @@ function exportCatalog(state, nowDay, file) {
     seen.add(k);
     const prices = (r.h || []).map((x) => x[1]);
     items.push({
-      b: /^n[aã]o dispon/i.test(r.b || "") ? "" : r.b || "", n: r.n, u: r.u, i: r.i || "", l: r.sn || r.s || "",
+      b: canonBrand(r.b), n: r.n, u: r.u, i: r.i || "", l: r.sn || r.s || "",
       p: r.p, x: r.px || 0, d: r.lp || 0, a: r.av === false ? 0 : 1,
       m: prices.length ? Math.min(...prices) : r.p, c: prices.length ? Math.max(...prices) : r.p,
       s: r.h?.[0]?.[0] || nowDay, v: r.d,
