@@ -24,7 +24,8 @@ Fora por enquanto: Amazon, Magalu, Casas Bahia, Mercado Livre e Camicado bloquei
 
 ## Quando chega um alerta
 
-- O preço ficou **15% ou mais abaixo do preço de costume** (o preço que ficou mais dias no ar nos últimos 30 dias); ou
+- O preço **caiu 10% ou mais de uma consulta para a outra** (avisa na hora, sem precisar de histórico); ou
+- ficou **15% ou mais abaixo do preço de costume** (o preço que ficou mais dias no ar nos últimos 30 dias); ou
 - bateu o **menor preço já visto** pelo bot (com pelo menos 3 dias de histórico); ou
 - atingiu o **preço-alvo** de um link avulso do `products.csv`.
 
@@ -32,11 +33,22 @@ O "de/por" da loja sozinho **não** gera alerta, para não cair em desconto de m
 Produtos abaixo de R$ 100 (peças, acessórios) são ignorados. Cada produto só é avisado de novo se cair mais 3%.
 Em rodadas com muitas quedas, as 12 maiores vêm com foto e o resto num resumo.
 
+Peças Le Creuset na cor **Thyme** vêm marcadas com "🌿 Cor Thyme" e passam na frente.
+
+A mensagem traz também o **preço no Pix** (quando a loja informa) e os **cupons anunciados no site da loja**
+(ex.: `COOK10`, `MUNDOTRUSSARDI`). Quando um cupom novo aparece num site, chega uma mensagem própria.
+Cupons de sites de cupom (Cuponomia, Méliuz) não entram: lá o código fica escondido atrás de link de afiliado.
+
 As regras ficam no começo do `bot.mjs` (bloco `RULES`) e a lista de marcas em `BRANDS`.
 
 ## Como roda
 
-GitHub Actions, a cada 3 horas, sem depender de computador ligado.
+GitHub Actions, **a cada 10 minutos**, sem depender de computador ligado.
+Smeg (425 páginas) e as peças Thyme do site oficial Le Creuset são lidas 1x por hora; cupons também 1x por hora.
+
+**O repositório precisa ser público** para rodar a cada 10 minutos de graça
+(repositório privado tem só 2.000 minutos/mês, o que acabaria em ~5 dias).
+O código não tem senha nenhuma: token e chat do Telegram ficam nos Secrets, que continuam privados.
 A primeira rodada só monta a base de preços (manda uma mensagem "Casa Premium ligado").
 O histórico fica guardado no cache do GitHub Actions.
 

@@ -30,6 +30,9 @@ const RULES = {
   maxSinglePerRun: 12, // alertas individuais por rodada; o resto vai num resumo
   usualWindowDays: 30,
   minPrice: 100, // ignora peças e acessórios baratos (parafusos, gaxetas...)
+  dropVsLast: 10, // % de queda desde a consulta anterior (avisa na hora, mesmo sem histórico longo)
+  heavyEveryMin: 60, // lojas lentas (muitas páginas) são lidas no máximo 1x por hora
+  couponsEveryMin: 60, // procura cupons nos sites 1x por hora
 };
 
 // ---------- lojas ----------
@@ -39,18 +42,18 @@ const STORES = [
     base: "https://www.lecreuset.com.br",
     variation: "https://www.lecreuset.com.br/on/demandware.store/Sites-LeCreuset_BR-Site/pt_BR/Product-Variation",
     colors: ["Thyme"] }, // cores anotadas: cada peça nessa cor é acompanhada separado
-  { id: "smeg", name: "Smeg Brasil", type: "magazord", brand: "Smeg",
+  { id: "smeg", name: "Smeg Brasil", type: "magazord", brand: "Smeg", heavy: true, home: "https://www.smegbrasil.com.br",
     sitemap: "https://www.smegbrasil.com.br/sitemap-produto.xml" },
   { id: "kitchenaid", name: "KitchenAid", type: "vtex", host: "https://www.kitchenaid.com.br" },
   { id: "karsten", name: "Karsten", type: "vtex", host: "https://www.karsten.com.br" },
   { id: "trussardi", name: "Trussardi", type: "vtex", host: "https://www.trussardi.com.br" },
-  { id: "casaalmeida", name: "Casa Almeida", type: "wake", brand: "Buddemeyer",
+  { id: "casaalmeida", name: "Casa Almeida", type: "wake", brand: "Buddemeyer", home: "https://www.casaalmeida.com.br",
     search: "https://www.casaalmeida.com.br/busca?q=buddemeyer" },
   // multimarcas: só os produtos das marcas abaixo
   { id: "americanas", name: "Americanas", type: "vtexBrands", host: "https://www.americanas.com.br" },
   { id: "spicy", name: "Spicy", type: "vtexBrands", host: "https://www.spicy.com.br" },
   { id: "letseatit", name: "Lets Eat It", type: "shopify", host: "https://letseatit.com.br" },
-  { id: "cookstore", name: "Cook Store", type: "woo", host: "https://cookstore.com.br" },
+  { id: "cookstore", name: "Cook Store", type: "woo", host: "https://cookstore.com.br", brands: ["Le Creuset"] },
 ];
 
 const BRANDS = ["Le Creuset", "Smeg", "KitchenAid", "Karsten", "Trussardi", "Buddemeyer"];
@@ -200,6 +203,12 @@ async function readVtex(store) {
           .filter((o) => o && o.Price > 0 && o.AvailableQuantity > 0)
           .sort((a, b) => a.Price - b.Price)[0];
         if (!offer) continue;
+        // preço no Pix (à vista), quando a loja informa
+        const pix = Math.min(
+          ...(offer.Installments || [])
+            .filter((x) => /pix/i.test(x.PaymentSystemName) && x.NumberOfInstallments === 1)
+            .map((x) => x.Value)
+        );
         const sku = it.name && it.name !== p.productName && !p.productName.includes(it.name) ? ` — ${it.name}` : "";
         out.set(`${store.id}:${it.itemId}`, {
           key: `${store.id}:${it.itemId}`,
@@ -209,6 +218,7 @@ async function readVtex(store) {
           image: it.images?.[0]?.imageUrl,
           price: offer.Price,
           listPrice: offer.ListPrice > offer.Price ? offer.ListPrice : null,
+          pix: pix > 0 && pix < offer.Price ? pix : null,
           available: offer.AvailableQuantity > 0,
         });
       }
@@ -251,8 +261,8 @@ async function readSfcc(store) {
   if (out.size === 0) throw new Error("nenhum produto lido");
 
   // A vitrine só mostra a cor padrão. Para as cores anotadas (ex.: Thyme), busca a cor
-  // no site e pergunta o preço daquela cor produto por produto.
-  for (const color of store.colors || []) {
+  // no site e pergunta o preço daquela cor produto por produto (1x por hora: são muitas consultas).
+  for (const color of store.runColors ? store.colors || [] : []) {
     try {
       const { body } = await get(`${store.base}/search?q=${encodeURIComponent(color)}&sz=500`);
       const pids = [...new Set([...body.matchAll(/data-impressiondata="([^"]+)"/g)]
@@ -368,7 +378,7 @@ async function readShopify(store) {
 // Lojas WooCommerce (Cook Store): API pública da loja, marca por marca
 async function readWoo(store) {
   const out = new Map();
-  for (const b of BRANDS) {
+  for (const b of store.brands || BRANDS) {
     for (let page = 1; page <= 30; page++) {
       const { body } = await get(
         `${store.host}/wp-json/wc/store/v1/products?search=${encodeURIComponent(b)}&per_page=100&page=${page}`,
@@ -424,6 +434,35 @@ async function readExtras() {
   return out.filter(Boolean);
 }
 
+// ---------- cupons ----------
+// Lê a página inicial da loja e pega códigos anunciados em faixas/banners
+// (ex.: "10% OFF na 1ª compra com o cupom COOK10") e descontos no Pix.
+const NOT_CODES = new Set(["AQUI", "PARA", "DESCONTO", "DESCONTOS", "OFF", "VALIDO", "VÁLIDO", "NOVO", "EXCLUSIVO", "PRIMEIRA", "COMPRA", "FRETE", "GRATIS", "GRÁTIS", "BLACK", "SITE", "LOJA", "APLICADO", "AUTOMATICO"]);
+
+const storeHome = (s) => s.home || s.host || s.base || new URL(s.search || s.sitemap).origin;
+
+async function readCoupons(store) {
+  const { body } = await get(storeHome(store), { tries: 2 });
+  const text = decodeHtml(
+    body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, " ").replace(/<[^>]+>/g, " ")
+  ).replace(/\s+/g, " ");
+  const codes = new Map();
+  for (const m of text.matchAll(/(?:cupom|c[oó]digo)\s*:?\s*["“']?([A-Z][A-Z0-9]{3,19})\b/g)) {
+    const code = m[1];
+    if (NOT_CODES.has(code) || codes.has(code)) continue;
+    // Frase do banner: do "10% OFF..." até o código, mais um "Válido para..." se vier logo depois
+    const before = text.slice(Math.max(0, m.index - 90), m.index + m[0].length).split(/\s[|•*]\s?|\*\s|\s-\s/).pop();
+    const pct = before.search(/\d+\s*%/);
+    let phrase = (pct >= 0 ? before.slice(pct) : before).trim();
+    const after = text.slice(m.index + m[0].length, m.index + m[0].length + 100).split(/\s[|•*-]\s?|\*/)[0];
+    if (/^\s*(v[aá]lido|em |para |nos? |nas? )/i.test(after))
+      phrase += after.length >= 99 ? after.replace(/\s+\S*$/, "") + "…" : after;
+    codes.set(code, phrase.trim());
+  }
+  const pixMatch = text.match(/(\d{1,2})\s*%\s*(?:OFF|de desconto)?\s*no\s*Pix/i);
+  return { codes: [...codes].map(([code, text]) => ({ code, text })), pix: pixMatch ? `${pixMatch[1]}% de desconto no Pix` : null };
+}
+
 const READERS = { vtex: readVtex, vtexBrands: readVtexBrands, shopify: readShopify, woo: readWoo, sfcc: readSfcc, magazord: readMagazord, wake: readWake };
 
 // ---------- histórico ----------
@@ -468,6 +507,7 @@ function evaluate(state, row, nowDay, todayIso) {
   const usual = usualPrice(h, nowDay);
   const prevMin = h.length ? Math.min(...h.map((x) => x[1])) : null;
   const historyDays = h.length ? nowDay - h[0][0] : 0;
+  const prevPrice = last ? last[1] : null; // guardar ANTES de atualizar o histórico
 
   if (!last || last[1] !== row.price) {
     if (last && last[0] === nowDay) last[1] = Math.min(last[1], row.price);
@@ -483,8 +523,13 @@ function evaluate(state, row, nowDay, todayIso) {
   if (rec.a && usual && row.price >= usual * 0.97) delete rec.a;
 
   const reasons = [];
-  const drop = usual ? ((usual - row.price) / usual) * 100 : 0;
+  let drop = usual ? ((usual - row.price) / usual) * 100 : 0;
   if (usual && drop >= RULES.dropVsUsual) reasons.push(`${drop.toFixed(0)}% abaixo do preço de costume`);
+  const dropLast = prevPrice ? ((prevPrice - row.price) / prevPrice) * 100 : 0;
+  if (dropLast >= RULES.dropVsLast) {
+    reasons.push(`caiu ${dropLast.toFixed(0)}% desde a última consulta (era ${brl(prevPrice)})`);
+    drop = Math.max(drop, dropLast);
+  }
   if (prevMin && historyDays >= RULES.minHistoryDays && row.price <= prevMin * (1 - RULES.newLowMargin / 100))
     reasons.push("menor preço já visto");
   if (row.target && row.price <= row.target) reasons.push("atingiu seu preço-alvo");
@@ -520,12 +565,15 @@ async function tg(method, payload) {
 function alertText(a) {
   const lines = [`<b>${esc(a.brand)}</b> — ${esc(a.name)}`];
   if (a.notes.length) lines.push(esc(a.notes.join(" · ")));
-  lines.push("", `Preço agora: <b>${brl(a.price)}</b>`);
+  lines.push("", `Preço agora: <b>${brl(a.price)}</b>${a.pix ? ` · no Pix ${brl(a.pix)}` : ""}`);
   if (a.usual && a.usual > a.price) lines.push(`Preço de costume: ${brl(a.usual)} (−${a.drop.toFixed(0)}%)`);
   if (a.prevMin && a.prevMin > a.price) lines.push(`Menor preço visto antes: ${brl(a.prevMin)}`);
   lines.push(`Motivo: ${esc(a.reasons.join("; "))}`);
   lines.push(`Loja: ${esc(a.storeName)}`);
-  lines.push("", `<a href="${esc(a.url)}">Ver na loja</a> · confira frete e estoque`);
+  const c = a.coupons;
+  if (c?.pix && !a.pix) lines.push(`Site anuncia: ${esc(c.pix)}`);
+  for (const k of c?.codes || []) lines.push(`Cupom no site: <code>${esc(k.code)}</code> — ${esc(k.text.slice(0, 120))}`);
+  lines.push("", `<a href="${esc(a.url)}">Ver na loja</a> · confira frete, estoque e regras do cupom`);
   return lines.join("\n");
 }
 
@@ -572,11 +620,36 @@ async function main() {
   const summary = [];
   const broken = [];
 
+  state.lastRead ||= {};
+  state.coupons ||= {};
+  const due = (key, everyMin) => ONLY.length || !state.lastRead[key] || Date.now() - state.lastRead[key] >= everyMin * 60000 - 120000;
+  const newCoupons = [];
+
   const stores = ONLY.length ? STORES.filter((s) => ONLY.includes(s.id)) : STORES;
   for (const store of stores) {
+    // Cupons no site da loja (1x por hora)
+    if (due(`cupom:${store.id}`, RULES.couponsEveryMin)) {
+      try {
+        const c = await readCoupons(store);
+        const before = state.coupons[store.id];
+        if (before) for (const k of c.codes) if (!before.codes.some((o) => o.code === k.code)) newCoupons.push({ store: store.name, ...k });
+        state.coupons[store.id] = c;
+        state.lastRead[`cupom:${store.id}`] = Date.now();
+        if (c.codes.length || c.pix) console.log(`  cupons ${store.name}: ${c.codes.map((k) => k.code).join(", ") || "-"} ${c.pix || ""}`);
+      } catch (e) {
+        console.log(`  cupons ${store.name}: falha (${e.message})`);
+      }
+    }
+
+    // Lojas lentas e as cores anotadas da Le Creuset: 1x por hora
+    if (store.heavy && !due(store.id, RULES.heavyEveryMin)) continue;
+    store.runColors = due(`${store.id}:cores`, RULES.heavyEveryMin);
+
     const t0 = Date.now();
     try {
       const rows = await READERS[store.type](store);
+      state.lastRead[store.id] = Date.now();
+      if (store.runColors) state.lastRead[`${store.id}:cores`] = Date.now();
       for (const row of rows) {
         row.store = store.id;
         row.storeName = store.name;
@@ -615,8 +688,26 @@ async function main() {
     await tg("sendMessage", {
       text:
         `✅ <b>Casa Premium ligado</b>\n\nAgora monitorando:\n${esc(summary.join("\n"))}\n\n` +
-        `Os preços de hoje viram a base. A partir das próximas consultas eu aviso quando algo cair ` +
-        `${RULES.dropVsUsual}% ou mais abaixo do preço de costume, ou bater o menor preço já visto.`,
+        `Os preços de hoje viram a base. Daqui pra frente eu aviso quando um preço cair ` +
+        `${RULES.dropVsLast}% ou mais de uma consulta para outra, ficar ${RULES.dropVsUsual}% abaixo do preço de costume ` +
+        `ou bater o menor preço já visto.` +
+        (Object.keys(state.coupons).length
+          ? "\n\nCupons anunciados nos sites hoje:\n" +
+            STORES.filter((s) => state.coupons[s.id]?.codes.length || state.coupons[s.id]?.pix)
+              .map((s) => `• ${esc(s.name)}: ${[...state.coupons[s.id].codes.map((k) => esc(k.code)), esc(state.coupons[s.id].pix || "")].filter(Boolean).join(" · ")}`)
+              .join("\n")
+          : ""),
+    });
+  }
+
+  for (const a of alerts) a.coupons = state.coupons[a.store];
+
+  // Cupom novo apareceu no site de uma loja
+  if (newCoupons.length && !firstRun) {
+    await tg("sendMessage", {
+      text: newCoupons
+        .map((k) => `Cupom novo no site da <b>${esc(k.store)}</b>: <code>${esc(k.code)}</code>\n${esc(k.text.slice(0, 160))}`)
+        .join("\n\n"),
     });
   }
 
