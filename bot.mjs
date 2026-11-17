@@ -543,7 +543,9 @@ function evaluate(state, row, nowDay, todayIso) {
   rec.a = row.price;
   rec.at = todayIso;
   const notes = NOTES.filter((n) => n.match(row)).map((n) => n.label);
-  return { ...row, usual, prevMin, drop, reasons, notes };
+  const prices = h.map((x) => x[1]);
+  const stats = { since: h[0][0], min: Math.min(...prices), max: Math.max(...prices), changes: h.length - 1 };
+  return { ...row, usual, prevMin, prevPrice, drop, reasons, notes, stats };
 }
 
 // ---------- Telegram ----------
@@ -570,8 +572,14 @@ function alertText(a) {
   const lines = [`<b>${esc(a.brand)}</b> — ${esc(a.name)}`];
   if (a.notes.length) lines.push(esc(a.notes.join(" · ")));
   lines.push("", `Preço agora: <b>${brl(a.price)}</b>${a.pix ? ` · no Pix ${brl(a.pix)}` : ""}`);
-  if (a.usual && a.usual > a.price) lines.push(`Preço de costume: ${brl(a.usual)} (−${a.drop.toFixed(0)}%)`);
-  if (a.prevMin && a.prevMin > a.price) lines.push(`Menor preço visto antes: ${brl(a.prevMin)}`);
+  if (a.prevPrice && a.prevPrice !== a.price) lines.push(`Preço anterior: ${brl(a.prevPrice)}`);
+  if (a.usual) lines.push(`Preço padrão (o que mais ficou no ar em 30 dias): ${brl(a.usual)}`);
+  if (a.prevMin) lines.push(`Menor preço antes deste: ${brl(a.prevMin)}`);
+  if (a.stats) {
+    const since = new Date(a.stats.since * 86400000).toISOString().slice(0, 10).split("-").reverse().slice(0, 2).join("/");
+    lines.push(`Histórico (desde ${since}): menor ${brl(a.stats.min)} · maior ${brl(a.stats.max)} · ${a.stats.changes} mudança(s) de preço`);
+  }
+  if (a.listPrice) lines.push(`"De" anunciado pela loja: ${brl(a.listPrice)}`);
   lines.push(`Motivo: ${esc(a.reasons.join("; "))}`);
   lines.push(`Loja: ${esc(a.storeName)}`);
   const c = a.coupons;
