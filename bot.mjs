@@ -67,6 +67,9 @@ const STORES = [
   { id: "fastshop", name: "Fast Shop", type: "vtexBrands", host: "https://site.fastshop.com.br", heavy: true, skipBrands: ["Peugeot"] },
   { id: "casaevideo", name: "Casa & Video", type: "vtexBrands", host: "https://www.casaevideo.com.br", heavy: true, skipBrands: ["Peugeot"] },
   { id: "zwilling", name: "Zwilling", type: "vtex", host: "https://www.zwilling.com.br" },
+  { id: "rodriguez", name: "Presentes Rodriguez", type: "vtexBrands", host: "https://www.presentesrodriguez.com.br", heavy: true, skipBrands: ["Peugeot"] },
+  { id: "coqueluche", name: "Coqueluche Casa", type: "vtexBrands", host: "https://www.coqueluchecasa.com.br", heavy: true, skipBrands: ["Peugeot"] },
+  { id: "webcontinental", name: "WebContinental", type: "vtexBrands", host: "https://www.webcontinental.com.br", heavy: true, skipBrands: ["Peugeot"] },
   { id: "letseatit", name: "Lets Eat It", type: "shopify", host: "https://letseatit.com.br" },
   { id: "cookstore", name: "Cook Store", type: "woo", host: "https://cookstore.com.br", brands: ["Le Creuset"] },
 ];
