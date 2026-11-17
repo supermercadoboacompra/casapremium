@@ -729,11 +729,12 @@ const ddmm = (day) => new Date(day * 86400000).toISOString().slice(5, 10).split(
 // Tom: fatos com emojis para leitura rápida. Nada de "imperdível".
 function alertText(a) {
   const pct = (from) => (from > a.price ? ` (−${(((from - a.price) / from) * 100).toFixed(0)}%)` : "");
-  const lines = [`📉 <b>Baixou o preço · ${esc(a.brand)}</b>`, `${productEmoji(a.name)} ${esc(a.name)}`];
+  const title = a.test ? `🧪 <b>Exemplo de alerta (teste) · ${esc(a.brand)}</b>` : `📉 <b>Baixou o preço · ${esc(a.brand)}</b>`;
+  const lines = [title, `${productEmoji(a.name)} ${esc(a.name)}`];
   if (a.notes.length) lines.push(esc(a.notes.join(" · ")));
   lines.push("", `💰 <b>Agora: ${brl(a.price)}</b>`);
   if (a.pix) lines.push(`💠 No Pix: ${brl(a.pix)}`);
-  if (a.prevPrice && a.prevPrice !== a.price) lines.push(`⏪ Antes: ${brl(a.prevPrice)}${pct(a.prevPrice)}`);
+  if (a.prevPrice) lines.push(`⏪ Antes: ${brl(a.prevPrice)}${a.prevPrice === a.price ? " (sem mudança)" : pct(a.prevPrice)}`);
   if (a.usual) lines.push(`📊 Preço padrão (30 dias): ${brl(a.usual)}${pct(a.usual)}`);
   if (a.prevMin) lines.push(`🏷️ Menor preço antes deste: ${brl(a.prevMin)}`);
   if (a.stats) lines.push(`🗓️ Desde ${ddmm(a.stats.since)}: menor ${brl(a.stats.min)} · maior ${brl(a.stats.max)}`);
@@ -859,19 +860,36 @@ async function sendDailyDigest(state, nowDay) {
 // ---------- principal ----------
 async function main() {
   if (TEST_ONLY) {
-    // Teste: manda um alerta de exemplo com um produto real (peça Le Creuset Thyme, preço de agora)
-    const lc = { ...STORES.find((s) => s.id === "lecreuset"), runColors: true };
-    const rows = (await readSfcc(lc)).filter((r) => r.available && /thyme/i.test(r.name) && r.price >= RULES.minPrice);
-    const p = rows.sort((a, b) => a.price - b.price)[0];
-    let coupons = null;
-    try { coupons = await readCoupons(lc); } catch {}
+    // Teste: manda um alerta de exemplo com um produto real (a TV Samsung 55" mais barata agora)
+    const sources = STORES.filter((s) => s.type === "vtexWatch" || s.type === "kabum");
+    const all = [];
+    for (const s of sources) {
+      try {
+        for (const r of await READERS[s.type](s)) {
+          r.storeName = r.seller && !/americanas/i.test(r.seller) && brandKey(r.seller) !== brandKey(s.name) ? `${s.name} (vendido por ${r.seller})` : s.name;
+          all.push(r);
+        }
+      } catch (e) {
+        console.log(`teste: falha em ${s.name}: ${e.message}`);
+      }
+    }
+    const p = all.filter((r) => r.available).sort((a, b) => (a.pix || a.price) - (b.pix || b.price))[0];
+    const lc = { storeName: p?.storeName };
+    const coupons = null;
     await tg("sendMessage", {
       text: "🧪 <b>Teste do Casa Premium</b>\nA mensagem abaixo é só um exemplo de como chega um alerta. O preço é real, de agora, mas <b>não houve queda</b>.",
     });
     if (p) {
+      // usa o histórico real do bot para esse produto, se houver; senão, só o preço de hoje
+      const h = loadState().items[p.key]?.h?.length ? loadState().items[p.key].h : [[dayNum(today()), p.price]];
+      const prices = h.map((x) => x[1]);
       await sendAlert({
-        ...p, storeName: lc.name, coupons, notes: ["🌿 Cor Thyme"], usual: null, prevMin: null, drop: 0,
-        reasons: ["exemplo de teste (sem queda real)"],
+        ...p, storeName: lc.storeName, coupons, notes: NOTES.filter((n) => n.match(p)).map((n) => n.label), drop: 0,
+        prevPrice: h.length > 1 ? h[h.length - 2][1] : h[0][1],
+        usual: usualPrice(h, dayNum(today()) + 1),
+        prevMin: Math.min(...prices),
+        stats: { since: h[0][0], min: Math.min(...prices), max: Math.max(...prices), changes: h.length - 1 },
+        test: true, reasons: ["exemplo de teste (sem queda real)"],
       });
     }
     console.log(`Teste enviado${p ? ` com ${p.name} a ${brl(p.price)}` : ""}.`);
