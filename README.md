@@ -3,7 +3,9 @@
 O bot lê **sozinho o catálogo inteiro** de lojas brasileiras confiáveis, guarda o histórico de preços
 e avisa no Telegram (com foto e link) quando um produto cai de preço de verdade.
 
-Marcas: Le Creuset, Smeg, KitchenAid, Karsten, Trussardi, Buddemeyer.
+Marcas: Le Creuset, Smeg, KitchenAid, Karsten, Trussardi, Buddemeyer, Trousseau, Oxford, Altenburg, Bialetti,
+Staub, Zwilling, Wüsthof, Peugeot, Riedel, Spiegelau, Schott Zwiesel, Vista Alegre, Emile Henry, Wolff, Laguiole,
+Mozart, Breville, Ninja, Zojirushi, Cuisinart (só acima de R$ 500) e Dyson. A lista fica em `BRANDS` no `bot.mjs`.
 
 ## Lojas monitoradas
 
@@ -15,12 +17,17 @@ Marcas: Le Creuset, Smeg, KitchenAid, Karsten, Trussardi, Buddemeyer.
 | karsten.com.br (oficial) | todo o catálogo Karsten |
 | trussardi.com.br (oficial) | todo o catálogo Trussardi |
 | casaalmeida.com.br (loja do grupo Buddemeyer) | produtos Buddemeyer |
-| americanas.com.br | só produtos das marcas acima |
+| trousseau.com.br (oficial) | todo o catálogo Trousseau |
+| oxfordporcelanas.com.br (oficial) | todo o catálogo Oxford |
+| altenburg.com.br (oficial) | catálogo Altenburg (1x por hora) |
+| lazershop.com.br | Wüsthof, Peugeot, Zwilling, Staub, Schott Zwiesel, Bialetti (a cada 15 min) |
+| americanas.com.br | só produtos das marcas acima (1x por hora) |
 | spicy.com.br | só produtos das marcas acima |
 | letseatit.com.br | só produtos das marcas acima |
 | cookstore.com.br | só produtos das marcas acima |
 
-Fora por enquanto: Amazon, Magalu, Casas Bahia, Mercado Livre e Camicado bloqueiam robôs.
+Fora por enquanto: Amazon, Magalu, Casas Bahia, Mercado Livre, Camicado, Westwing, Tok&Stok e os sites próprios de
+Zwilling, Vista Alegre, Nespresso, Riedel e Dyson bloqueiam robôs ou não abrem o catálogo. Bialetti (site próprio) estava fora do ar.
 
 ## Quando chega um alerta
 

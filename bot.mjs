@@ -50,14 +50,40 @@ const STORES = [
   { id: "trussardi", name: "Trussardi", type: "vtex", host: "https://www.trussardi.com.br" },
   { id: "casaalmeida", name: "Casa Almeida", type: "wake", brand: "Buddemeyer", home: "https://www.casaalmeida.com.br",
     search: "https://www.casaalmeida.com.br/busca?q=buddemeyer" },
-  // multimarcas: só os produtos das marcas abaixo
-  { id: "americanas", name: "Americanas", type: "vtexBrands", host: "https://www.americanas.com.br" },
+  { id: "trousseau", name: "Trousseau", type: "vtex", host: "https://www.trousseau.com.br" },
+  { id: "oxford", name: "Oxford Porcelanas", type: "vtex", host: "https://www.oxfordporcelanas.com.br" },
+  // Lazer Shop bloqueia acesso em excesso: só as marcas que ela vende, a cada 15 min
+  { id: "lazershop", name: "Lazer Shop", type: "lazer", host: "https://www.lazershop.com.br", everyMin: 15,
+    brands: ["Wüsthof", "Peugeot", "Zwilling", "Staub", "Schott Zwiesel", "Bialetti"] },
+  { id: "altenburg", name: "Altenburg", type: "vtex", host: "https://www.altenburg.com.br", heavy: true },
+  // multimarcas: só os produtos das marcas em BRANDS (Americanas busca marca por marca: 1x por hora)
+  { id: "americanas", name: "Americanas", type: "vtexBrands", host: "https://www.americanas.com.br", heavy: true, skipBrands: ["Peugeot", "Oxford"] },
   { id: "spicy", name: "Spicy", type: "vtexBrands", host: "https://www.spicy.com.br" },
   { id: "letseatit", name: "Lets Eat It", type: "shopify", host: "https://letseatit.com.br" },
   { id: "cookstore", name: "Cook Store", type: "woo", host: "https://cookstore.com.br", brands: ["Le Creuset"] },
 ];
 
-const BRANDS = ["Le Creuset", "Smeg", "KitchenAid", "Karsten", "Trussardi", "Buddemeyer"];
+// compara marcas sem acento, maiúscula ou espaço (Wüsthof = Wusthof)
+const brandKey = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z]/g, "");
+
+const BRANDS = [
+  "Le Creuset", "Smeg", "KitchenAid", "Karsten", "Trussardi", "Buddemeyer",
+  "Trousseau", "Oxford", "Bialetti", "Altenburg",
+  "Staub", "Zwilling", "Riedel", "Spiegelau", "Schott Zwiesel", "Vista Alegre", "Emile Henry",
+  "Wolff", "Laguiole", "Mozart", "Breville", "Wüsthof",
+  "Ninja", "Zojirushi", "Cuisinart", "Dyson", "Peugeot",
+];
+
+// Brinquedos com nome parecido (Lego Ninjago, Tartarugas Ninja) não entram
+const TOY_RX = /lego|ninjago|tartaruga|turtles|boneco|brinquedo|fantasia|pel[uú]cia/i;
+
+// Preço mínimo por marca (para pegar só as "coisas boas"); as demais usam RULES.minPrice
+const MIN_BY_BRAND = { Cuisinart: 500, Ninja: 300, Wolff: 200 };
+const minPriceFor = (brand) => {
+  const k = brandKey(brand);
+  const hit = Object.keys(MIN_BY_BRAND).find((b) => k.includes(brandKey(b)));
+  return hit ? MIN_BY_BRAND[hit] : RULES.minPrice;
+};
 
 // Anotações: destacam peças de interesse no alerta e furam a fila do resumo.
 const NOTES = [
@@ -172,8 +198,8 @@ function findProduct(node) {
 // Lojas multimarcas (Americanas): busca marca por marca e fica só com o que é da marca mesmo.
 async function readVtexBrands(store) {
   const out = new Map();
-  for (const brand of BRANDS) {
-    const rows = await readVtex({ ...store, ft: brand, keepBrand: brand });
+  for (const brand of BRANDS.filter((b) => !(store.skipBrands || []).includes(b))) {
+    const rows = await readVtex({ ...store, ft: brand, keepBrand: brand, cap: store.cap || 500 });
     for (const r of rows) out.set(r.key, r);
   }
   return [...out.values()];
@@ -182,21 +208,32 @@ async function readVtexBrands(store) {
 async function readVtex(store) {
   const api = `${store.host}/api/catalog_system/pub/products/search`;
   const ft = store.ft ? `ft=${encodeURIComponent(store.ft)}&` : "";
-  const norm = (s) => (s || "").toLowerCase().replace(/[^a-z]/g, "");
+  const norm = brandKey;
   const head = await get(`${api}?${ft}_from=0&_to=0`);
   const total = parseInt((head.headers.get("resources") || "").split("/")[1] || "0", 10);
   // A VTEX só deixa paginar até 2.500. Se passar disso, lê o resto pela ordem inversa de preço.
   const ranges = [];
-  for (let f = 0; f < Math.min(total, 2500); f += 50) ranges.push(["OrderByPriceASC", f]);
-  for (let f = 0; f < Math.max(0, total - 2500) + 50; f += 50) if (total > 2500) ranges.push(["OrderByPriceDESC", f]);
+  if (store.cap) {
+    // busca por marca em multimarcas: só os resultados mais relevantes
+    for (let f = 0; f < Math.min(total, store.cap); f += 50) ranges.push(["", f]);
+  } else {
+    for (let f = 0; f < Math.min(total, 2500); f += 50) ranges.push(["OrderByPriceASC", f]);
+    for (let f = 0; f < Math.max(0, total - 2500) + 50; f += 50) if (total > 2500) ranges.push(["OrderByPriceDESC", f]);
+  }
 
   const pages = await pool(ranges, 3, async ([order, f]) =>
-    (await get(`${api}?${ft}O=${order}&_from=${f}&_to=${Math.min(f + 49, 2549)}`, { json: true })).body
+    (await get(`${api}?${ft}${order ? `O=${order}&` : ""}_from=${f}&_to=${Math.min(f + 49, 2549)}`, { json: true })).body
   );
   const out = new Map();
   for (const page of pages) {
     for (const p of page || []) {
-      if (store.keepBrand && !norm(p.brand).includes(norm(store.keepBrand))) continue;
+      // multimarcas: a marca pode vir no campo da marca ou só no nome (vendedores de fora usam "Não Disponível")
+      if (store.keepBrand && TOY_RX.test(p.productName)) continue;
+      if (store.keepBrand) {
+        const byBrand = norm(p.brand).includes(norm(store.keepBrand));
+        const noBrand = !p.brand || /indispon|naodisp|generic|semmarca/.test(norm(p.brand));
+        if (!byBrand && !(noBrand && norm(p.productName).includes(norm(store.keepBrand)))) continue;
+      }
       for (const it of p.items || []) {
         // menor preço entre os vendedores com estoque
         const offer = (it.sellers || [])
@@ -341,8 +378,8 @@ async function readWake(store) {
 }
 
 const isOurBrand = (text) => {
-  const t = (text || "").toLowerCase().replace(/[^a-z]/g, "");
-  return BRANDS.find((b) => t.includes(b.toLowerCase().replace(/[^a-z]/g, "")));
+  const t = brandKey(text);
+  return BRANDS.find((b) => t.includes(brandKey(b)));
 };
 
 // Lojas Shopify (Lets Eat It): o catálogo inteiro sai em /products.json
@@ -354,7 +391,7 @@ async function readShopify(store) {
     if (!list.length) break;
     for (const p of list) {
       const brand = isOurBrand(p.vendor) || isOurBrand(p.title);
-      if (!brand) continue;
+      if (!brand || TOY_RX.test(p.title)) continue;
       for (const v of p.variants || []) {
         const price = num(v.price);
         if (!price || !v.available) continue;
@@ -411,6 +448,45 @@ async function readWoo(store) {
   return [...out.values()];
 }
 
+// Lazer Shop (plataforma MKX): uma página por marca (/wusthof/, /peugeot/...), 24 itens por página
+async function readLazer(store) {
+  const slug = (b) => b.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  const out = new Map();
+  await pool(store.brands || BRANDS, 2, async (brand) => {
+    for (let page = 1; page <= 30; page++) {
+      let html;
+      try {
+        html = (await get(`${store.host}/${slug(brand)}/${page > 1 ? `pagina-${page}/` : ""}`, { tries: 2 })).body;
+      } catch {
+        return; // marca não existe nessa loja
+      }
+      const blocks = html.split('class="product-thumb product-thumb').slice(1);
+      let fresh = 0;
+      for (const b of blocks) {
+        const id = (b.match(/productIds\[\]" value="(\d+)"/) || [])[1];
+        const price = num((b.match(/productPrices\[\]" value="([\d.,]+)"/) || [])[1]);
+        const a = b.match(/<a href="([^"]+)" title="([^"]+)"/);
+        if (!id || !price || !a) continue;
+        const name = decodeHtml(a[2]);
+        if (!brandKey(name).includes(brandKey(brand)) && !brandKey((b.match(/productManufacturers\[\]" value="([^"]*)"/) || [])[1]).includes(brandKey(brand))) continue;
+        const key = `${store.id}:${id}`;
+        if (!out.has(key)) fresh++;
+        const pixPct = parseInt((b.match(/-(\d{1,2})%\s*<\/span>\s*<strong[^>]*>\s*à vista no PIX/i) || [])[1] || "0", 10);
+        out.set(key, {
+          key, brand, name, url: a[1],
+          image: (b.match(/data-original="([^"]+)"/) || [])[1],
+          price, listPrice: null,
+          pix: pixPct ? Math.round(price * (100 - pixPct)) / 100 : null,
+          available: !/esgotad|indispon[ií]vel|avise-me/i.test(b.slice(0, 4000)),
+        });
+      }
+      if (!fresh || !html.includes(`pagina-${page + 1}/`)) return;
+    }
+  });
+  if (out.size === 0) throw new Error("nenhum produto lido");
+  return [...out.values()];
+}
+
 // Links avulsos do products.csv (qualquer loja que publique o preço no padrão schema.org)
 async function readExtras() {
   if (!fs.existsSync(EXTRA_CSV)) return [];
@@ -464,7 +540,7 @@ async function readCoupons(store) {
   return { codes: [...codes].map(([code, text]) => ({ code, text })), pix: pixMatch ? `${pixMatch[1]}% de desconto no Pix` : null };
 }
 
-const READERS = { vtex: readVtex, vtexBrands: readVtexBrands, shopify: readShopify, woo: readWoo, sfcc: readSfcc, magazord: readMagazord, wake: readWake };
+const READERS = { vtex: readVtex, vtexBrands: readVtexBrands, lazer: readLazer, shopify: readShopify, woo: readWoo, sfcc: readSfcc, magazord: readMagazord, wake: readWake };
 
 // ---------- histórico ----------
 // state.items[key] = { b, n, u, i, s, h: [[dia, preço], ...] (só quando o preço muda), a: preço do último aviso }
@@ -521,7 +597,7 @@ function evaluate(state, row, nowDay, todayIso) {
   while (h.length > 2 && h[1][0] < nowDay - 120) h.shift();
 
   if (isNew) return null; // primeira vez que vemos: vira a base
-  if (row.price < RULES.minPrice && !row.target) return null;
+  if (row.price < minPriceFor(row.brand) && !row.target) return null;
 
   // Voltou ao preço de costume: libera novos avisos
   if (rec.a && usual && row.price >= usual * 0.97) delete rec.a;
@@ -643,7 +719,7 @@ async function sendDailyDigest(state, nowDay) {
   await tg("sendMessage", { text: msg, disable_web_page_preview: true });
 
   const disc = live
-    .filter((r) => r.lp && r.p >= RULES.minPrice)
+    .filter((r) => r.lp && r.p >= minPriceFor(r.b))
     .map((r) => ({ ...r, off: ((r.lp - r.p) / r.lp) * 100 }))
     .filter((r) => r.off >= 20)
     .sort((a, b) => b.off - a.off);
@@ -717,6 +793,7 @@ async function main() {
 
     // Lojas lentas e as cores anotadas da Le Creuset: 1x por hora
     if (store.heavy && !due(store.id, RULES.heavyEveryMin)) continue;
+    if (store.everyMin && !due(store.id, store.everyMin)) continue;
     store.runColors = due(`${store.id}:cores`, RULES.heavyEveryMin);
 
     const t0 = Date.now();
