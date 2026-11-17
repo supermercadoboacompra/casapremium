@@ -606,8 +606,22 @@ async function sendDigest(list, title) {
 // ---------- principal ----------
 async function main() {
   if (TEST_ONLY) {
-    await tg("sendMessage", { text: "✅ Casa Premium conectado! O bot consegue mandar mensagens aqui." });
-    console.log("Teste do Telegram enviado.");
+    // Teste: manda um alerta de exemplo com um produto real (peça Le Creuset Thyme, preço de agora)
+    const lc = { ...STORES.find((s) => s.id === "lecreuset"), runColors: true };
+    const rows = (await readSfcc(lc)).filter((r) => r.available && /thyme/i.test(r.name) && r.price >= RULES.minPrice);
+    const p = rows.sort((a, b) => a.price - b.price)[0];
+    let coupons = null;
+    try { coupons = await readCoupons(lc); } catch {}
+    await tg("sendMessage", {
+      text: "🧪 <b>Teste do Casa Premium</b>\nA mensagem abaixo é só um exemplo de como chega um alerta. O preço é real, de agora, mas <b>não houve queda</b>.",
+    });
+    if (p) {
+      await sendAlert({
+        ...p, storeName: lc.name, coupons, notes: ["🌿 Cor Thyme"], usual: null, prevMin: null, drop: 0,
+        reasons: ["exemplo de teste (sem queda real)"],
+      });
+    }
+    console.log(`Teste enviado${p ? ` com ${p.name} a ${brl(p.price)}` : ""}.`);
     return;
   }
   if (DRY_RUN) console.log("Modo simulação: nada será enviado ao Telegram.");
