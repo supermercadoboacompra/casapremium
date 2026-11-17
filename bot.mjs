@@ -50,14 +50,13 @@ const STORES = [
   { id: "trussardi", name: "Trussardi", type: "vtex", host: "https://www.trussardi.com.br" },
   { id: "casaalmeida", name: "Casa Almeida", type: "wake", brand: "Buddemeyer", home: "https://www.casaalmeida.com.br",
     search: "https://www.casaalmeida.com.br/busca?q=buddemeyer" },
-  { id: "trousseau", name: "Trousseau", type: "vtex", host: "https://www.trousseau.com.br" },
-  { id: "oxford", name: "Oxford Porcelanas", type: "vtex", host: "https://www.oxfordporcelanas.com.br" },
+  { id: "trousseau", name: "Trousseau", type: "vtex", host: "https://www.trousseau.com.br", brand: "Trousseau" },
   // Lazer Shop bloqueia acesso em excesso: só as marcas que ela vende, a cada 15 min
   { id: "lazershop", name: "Lazer Shop", type: "lazer", host: "https://www.lazershop.com.br", everyMin: 15,
     brands: ["Wüsthof", "Peugeot", "Zwilling", "Staub", "Schott Zwiesel", "Bialetti"] },
   { id: "altenburg", name: "Altenburg", type: "vtex", host: "https://www.altenburg.com.br", heavy: true },
   // multimarcas: só os produtos das marcas em BRANDS (Americanas busca marca por marca: 1x por hora)
-  { id: "americanas", name: "Americanas", type: "vtexBrands", host: "https://www.americanas.com.br", heavy: true, skipBrands: ["Peugeot", "Oxford"] },
+  { id: "americanas", name: "Americanas", type: "vtexBrands", host: "https://www.americanas.com.br", heavy: true, skipBrands: ["Peugeot"] },
   { id: "spicy", name: "Spicy", type: "vtexBrands", host: "https://www.spicy.com.br" },
   { id: "letseatit", name: "Lets Eat It", type: "shopify", host: "https://letseatit.com.br" },
   { id: "cookstore", name: "Cook Store", type: "woo", host: "https://cookstore.com.br", brands: ["Le Creuset"] },
@@ -68,7 +67,7 @@ const brandKey = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLow
 
 const BRANDS = [
   "Le Creuset", "Smeg", "KitchenAid", "Karsten", "Trussardi", "Buddemeyer",
-  "Trousseau", "Oxford", "Bialetti", "Altenburg",
+  "Trousseau", "Bialetti", "Altenburg",
   "Staub", "Zwilling", "Riedel", "Spiegelau", "Schott Zwiesel", "Vista Alegre", "Emile Henry",
   "Wolff", "Laguiole", "Mozart", "Breville", "Wüsthof",
   "Ninja", "Zojirushi", "Cuisinart", "Dyson", "Peugeot",
@@ -228,6 +227,7 @@ async function readVtex(store) {
   for (const page of pages) {
     for (const p of page || []) {
       // multimarcas: a marca pode vir no campo da marca ou só no nome (vendedores de fora usam "Não Disponível")
+      if (store.onlyBrands && !store.onlyBrands.some((b) => norm(b) === norm(p.brand))) continue;
       if (store.keepBrand && TOY_RX.test(p.productName)) continue;
       if (store.keepBrand) {
         const byBrand = norm(p.brand).includes(norm(store.keepBrand));
@@ -247,10 +247,14 @@ async function readVtex(store) {
             .filter((x) => /pix/i.test(x.PaymentSystemName) && x.NumberOfInstallments === 1)
             .map((x) => x.Value)
         );
-        const sku = it.name && it.name !== p.productName && !p.productName.includes(it.name) ? ` — ${it.name}` : "";
+        // variação (cor/tamanho): só o que difere do nome do produto, sem "Único"
+        let v = (it.name || "").trim();
+        if (v.startsWith(p.productName)) v = v.slice(p.productName.length);
+        v = v.replace(/^[\s\-–—|:]+/, "").replace(/(^|\s*-\s*)[ÚU]nico$/i, "").trim();
+        const sku = v && !p.productName.includes(v) ? ` — ${v}` : "";
         out.set(`${store.id}:${it.itemId}`, {
           key: `${store.id}:${it.itemId}`,
-          brand: p.brand || store.name,
+          brand: store.brand || p.brand || store.name,
           name: p.productName + sku,
           url: p.link,
           image: it.images?.[0]?.imageUrl,
@@ -643,25 +647,45 @@ async function tg(method, payload) {
   await sleep(1200); // respeita o limite de mensagens do Telegram
 }
 
-// Tom neutro: só os fatos (preço, comparação, loja). Nada de "imperdível".
+// Emoji pelo tipo de produto (deixa a mensagem fácil de bater o olho)
+function productEmoji(name) {
+  const n = (name || "").toLowerCase();
+  const map = [
+    [/panela|cocotte|caçarola|cacarola|frigideira|skillet|wok|stockpot|chaleira/, "🍲"],
+    [/faca|cutelo|santoku|chaira|tesoura|bloco de facas/, "🔪"],
+    [/taça|taca|copo|decanter|jarra/, "🍷"],
+    [/moedor|saleiro|pimenta/, "🧂"],
+    [/caneca|xícara|xicara|cafeteira|espresso|café|cafe/, "☕"],
+    [/prato|travessa|bowl|tigela|ramekin|molheira|manteigueira|jogo de jantar|louça|louca/, "🍽️"],
+    [/batedeira|liquidificador|processador|mixer|fritadeira|air ?fryer|torradeira|forno|panela de arroz|sorveteira/, "⚙️"],
+    [/aspirador|secador|modelador/, "🌀"],
+    [/lençol|lencol|jogo de cama|edredom|colcha|fronha|travesseiro|duvet|cobre.?leito|manta/, "🛏️"],
+    [/toalha de (banho|rosto|piso)|toalha banh|roupão|roupao|tapete de banho/, "🛁"],
+    [/toalha de mesa|guardanapo|jogo americano|caminho de mesa/, "🍴"],
+  ];
+  return (map.find(([rx]) => rx.test(n)) || [null, "🏠"])[1];
+}
+
+const ddmm = (day) => new Date(day * 86400000).toISOString().slice(5, 10).split("-").reverse().join("/");
+
+// Tom: fatos com emojis para leitura rápida. Nada de "imperdível".
 function alertText(a) {
-  const lines = [`<b>${esc(a.brand)}</b> — ${esc(a.name)}`];
+  const pct = (from) => (from > a.price ? ` (−${(((from - a.price) / from) * 100).toFixed(0)}%)` : "");
+  const lines = [`📉 <b>Baixou o preço · ${esc(a.brand)}</b>`, `${productEmoji(a.name)} ${esc(a.name)}`];
   if (a.notes.length) lines.push(esc(a.notes.join(" · ")));
-  lines.push("", `Preço agora: <b>${brl(a.price)}</b>${a.pix ? ` · no Pix ${brl(a.pix)}` : ""}`);
-  if (a.prevPrice && a.prevPrice !== a.price) lines.push(`Preço anterior: ${brl(a.prevPrice)}`);
-  if (a.usual) lines.push(`Preço padrão (o que mais ficou no ar em 30 dias): ${brl(a.usual)}`);
-  if (a.prevMin) lines.push(`Menor preço antes deste: ${brl(a.prevMin)}`);
-  if (a.stats) {
-    const since = new Date(a.stats.since * 86400000).toISOString().slice(0, 10).split("-").reverse().slice(0, 2).join("/");
-    lines.push(`Histórico (desde ${since}): menor ${brl(a.stats.min)} · maior ${brl(a.stats.max)} · ${a.stats.changes} mudança(s) de preço`);
-  }
-  if (a.listPrice) lines.push(`"De" anunciado pela loja: ${brl(a.listPrice)}`);
-  lines.push(`Motivo: ${esc(a.reasons.join("; "))}`);
-  lines.push(`Loja: ${esc(a.storeName)}`);
+  lines.push("", `💰 <b>Agora: ${brl(a.price)}</b>`);
+  if (a.pix) lines.push(`💠 No Pix: ${brl(a.pix)}`);
+  if (a.prevPrice && a.prevPrice !== a.price) lines.push(`⏪ Antes: ${brl(a.prevPrice)}${pct(a.prevPrice)}`);
+  if (a.usual) lines.push(`📊 Preço padrão (30 dias): ${brl(a.usual)}${pct(a.usual)}`);
+  if (a.prevMin) lines.push(`🏷️ Menor preço antes deste: ${brl(a.prevMin)}`);
+  if (a.stats) lines.push(`🗓️ Desde ${ddmm(a.stats.since)}: menor ${brl(a.stats.min)} · maior ${brl(a.stats.max)}`);
+  if (a.listPrice) lines.push(`🧾 "De" da loja: ${brl(a.listPrice)}`);
+  lines.push(`✅ Por quê: ${esc(a.reasons.join("; "))}`);
+  lines.push(`🏪 Loja: ${esc(a.storeName)}`);
   const c = a.coupons;
-  if (c?.pix && !a.pix) lines.push(`Site anuncia: ${esc(c.pix)}`);
-  for (const k of c?.codes || []) lines.push(`Cupom no site: <code>${esc(k.code)}</code> — ${esc(k.text.slice(0, 120))}`);
-  lines.push("", `<a href="${esc(a.url)}">Ver na loja</a> · confira frete, estoque e regras do cupom`);
+  if (c?.pix && !a.pix) lines.push(`💠 Site anuncia: ${esc(c.pix)}`);
+  for (const k of c?.codes || []) lines.push(`🎟️ Cupom: <code>${esc(k.code)}</code> (${esc(k.text.slice(0, 90))})`);
+  lines.push("", `🔗 Link: ${esc(a.url)}`);
   return lines.join("\n");
 }
 
@@ -677,18 +701,34 @@ async function sendAlert(a) {
   await tg("sendMessage", { text, disable_web_page_preview: false });
 }
 
-async function sendDigest(list, title) {
-  // Telegram aceita até 4096 caracteres por mensagem
-  let msg = `<b>${esc(title)}</b>\n`;
-  for (const a of list) {
-    const line = `\n• <a href="${esc(a.url)}">${esc(a.brand)} — ${esc(a.name.slice(0, 70))}</a>: <b>${brl(a.price)}</b>${a.drop ? ` (−${a.drop.toFixed(0)}%)` : ""}${a.notes.length ? " " + esc(a.notes.join(" ")) : ""}`;
-    if (msg.length + line.length > 3900) {
+// Manda um título + vários blocos, quebrando em mais mensagens quando passa do limite do Telegram (4096)
+async function sendBlocks(title, blocks) {
+  let msg = title;
+  for (const b of blocks) {
+    if (msg.length + b.length + 2 > 3900) {
       await tg("sendMessage", { text: msg, disable_web_page_preview: true });
       msg = "";
     }
-    msg += line;
+    msg += (msg ? "\n\n" : "") + b;
   }
   if (msg.trim()) await tg("sendMessage", { text: msg, disable_web_page_preview: true });
+}
+
+// Bloco de um produto: nome, preço, loja e "Link: ..."
+function itemBlock({ name, brand, price, pix, store, url, extra = "", notes = [] }) {
+  const head = `${productEmoji(name)} <b>${esc(brand ? `${brand} · ` : "")}${esc(name.slice(0, 80))}</b>${notes.length ? " " + esc(notes.join(" ")) : ""}`;
+  const info = `💰 ${brl(price)}${pix ? ` · 💠 Pix ${brl(pix)}` : ""}${extra} · 🏪 ${esc(store)}`;
+  return `${head}\n${info}\n🔗 Link: ${esc(url)}`;
+}
+
+async function sendDigest(list, title) {
+  await sendBlocks(
+    `📉 <b>${esc(title)}</b>`,
+    list.map((a) =>
+      itemBlock({ name: a.name, brand: a.brand, price: a.price, pix: a.pix, store: a.storeName, url: a.url, notes: a.notes,
+        extra: a.drop ? ` · ⏪ −${a.drop.toFixed(0)}%` : "" })
+    )
+  );
 }
 
 // Resumo diário: peças Thyme em estoque, maiores descontos anunciados pelas lojas e cupons.
@@ -696,7 +736,7 @@ async function sendDailyDigest(state, nowDay) {
   // mesma peça pode entrar 2x (vitrine + busca por cor): fica uma por loja/nome/preço
   const seen = new Set();
   const live = Object.values(state.items)
-    .filter((r) => r.d >= nowDay - 1 && r.av !== false && r.p)
+    .filter((r) => r.d >= nowDay - 1 && r.av !== false && r.p && (!r.s || STORES.some((x) => x.id === r.s)))
     .filter((r) => {
       const k = `${r.s}|${r.n}|${r.p}`;
       return !seen.has(k) && seen.add(k);
@@ -706,37 +746,40 @@ async function sendDailyDigest(state, nowDay) {
     return list.filter((r) => (c[r.s] = (c[r.s] || 0) + 1) <= n);
   };
   const total = live.length;
-  const line = (r, extra = "") =>
-    `\n• <a href="${esc(r.u)}">${esc(r.n.slice(0, 75))}</a> — <b>${brl(r.p)}</b>${r.px ? ` (Pix ${brl(r.px)})` : ""} · ${esc(r.sn || r.s)}${extra}`;
+  const block = (r, extra = "") =>
+    itemBlock({ name: r.n, price: r.p, pix: r.px, store: r.sn || r.s, url: r.u, extra });
 
   const thyme = live
     .filter((r) => /creuset/i.test(r.b) && /thyme|tomilho/i.test(`${r.n} ${r.u}`) && r.p >= RULES.minPrice)
     .sort((a, b) => a.p - b.p);
-  let msg = `<b>Resumo do dia — Casa Premium</b>\n${total.toLocaleString("pt-BR")} produtos acompanhados agora.`;
-  msg += `\n\n<b>🌿 Le Creuset Thyme em estoque (${thyme.length})</b>`;
-  for (const r of thyme.slice(0, 25)) msg += line(r);
-  if (thyme.length > 25) msg += `\n… e mais ${thyme.length - 25}.`;
-  await tg("sendMessage", { text: msg, disable_web_page_preview: true });
+  await sendBlocks(
+    `☀️ <b>Resumo do dia · Casa Premium</b>\n👀 ${total.toLocaleString("pt-BR")} produtos acompanhados agora\n\n🌿 <b>Le Creuset Thyme em estoque (${thyme.length})</b>`,
+    thyme.slice(0, 25).map((r) => block(r)).concat(thyme.length > 25 ? [`… e mais ${thyme.length - 25}.`] : [])
+  );
 
   const disc = live
     .filter((r) => r.lp && r.p >= minPriceFor(r.b))
     .map((r) => ({ ...r, off: ((r.lp - r.p) / r.lp) * 100 }))
     .filter((r) => r.off >= 20)
     .sort((a, b) => b.off - a.off);
-  let msg2 = `<b>Maiores descontos anunciados pelas lojas hoje</b>\n(é o "de/por" da própria loja; o bot ainda está montando o histórico para conferir)`;
-  for (const r of perStore(disc, 3).slice(0, 15)) msg2 += line(r, ` · de ${brl(r.lp)} (−${r.off.toFixed(0)}%)`);
-  if (!disc.length) msg2 += "\nNenhum acima de 20%.";
+  await sendBlocks(
+    `🏷️ <b>Maiores descontos anunciados pelas lojas hoje</b>\n<i>é o "de/por" da própria loja; o histórico do bot ainda está crescendo</i>`,
+    disc.length
+      ? perStore(disc, 3).slice(0, 15).map((r) => block(r, ` · 🧾 de ${brl(r.lp)} (−${r.off.toFixed(0)}%)`))
+      : ["Nenhum acima de 20%."]
+  );
 
   const cup = STORES.filter((s) => state.coupons?.[s.id]?.codes.length || state.coupons?.[s.id]?.pix);
   if (cup.length) {
-    msg2 += `\n\n<b>Cupons e descontos anunciados nos sites</b>`;
-    for (const s of cup) {
-      const c = state.coupons[s.id];
-      const parts = [...c.codes.map((k) => `<code>${esc(k.code)}</code> (${esc(k.text.slice(0, 90))})`), c.pix ? esc(c.pix) : ""].filter(Boolean);
-      msg2 += `\n• ${esc(s.name)}: ${parts.join(" · ")}`;
-    }
+    await sendBlocks(
+      `🎟️ <b>Cupons e descontos anunciados nos sites</b>`,
+      cup.map((s) => {
+        const c = state.coupons[s.id];
+        const parts = [...c.codes.map((k) => `<code>${esc(k.code)}</code> (${esc(k.text.slice(0, 90))})`), c.pix ? `💠 ${esc(c.pix)}` : ""].filter(Boolean);
+        return `🏪 <b>${esc(s.name)}</b>: ${parts.join(" · ")}`;
+      })
+    );
   }
-  await tg("sendMessage", { text: msg2, disable_web_page_preview: true });
 }
 
 // ---------- principal ----------

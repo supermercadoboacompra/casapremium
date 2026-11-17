@@ -3,7 +3,7 @@
 O bot lê **sozinho o catálogo inteiro** de lojas brasileiras confiáveis, guarda o histórico de preços
 e avisa no Telegram (com foto e link) quando um produto cai de preço de verdade.
 
-Marcas: Le Creuset, Smeg, KitchenAid, Karsten, Trussardi, Buddemeyer, Trousseau, Oxford, Altenburg, Bialetti,
+Marcas: Le Creuset, Smeg, KitchenAid, Karsten, Trussardi, Buddemeyer, Trousseau, Altenburg, Bialetti,
 Staub, Zwilling, Wüsthof, Peugeot, Riedel, Spiegelau, Schott Zwiesel, Vista Alegre, Emile Henry, Wolff, Laguiole,
 Mozart, Breville, Ninja, Zojirushi, Cuisinart (só acima de R$ 500) e Dyson. A lista fica em `BRANDS` no `bot.mjs`.
 
@@ -18,7 +18,6 @@ Mozart, Breville, Ninja, Zojirushi, Cuisinart (só acima de R$ 500) e Dyson. A l
 | trussardi.com.br (oficial) | todo o catálogo Trussardi |
 | casaalmeida.com.br (loja do grupo Buddemeyer) | produtos Buddemeyer |
 | trousseau.com.br (oficial) | todo o catálogo Trousseau |
-| oxfordporcelanas.com.br (oficial) | todo o catálogo Oxford |
 | altenburg.com.br (oficial) | catálogo Altenburg (1x por hora) |
 | lazershop.com.br | Wüsthof, Peugeot, Zwilling, Staub, Schott Zwiesel, Bialetti (a cada 15 min) |
 | americanas.com.br | só produtos das marcas acima (1x por hora) |
