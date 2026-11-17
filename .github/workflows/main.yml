@@ -1,16 +1,16 @@
-
 name: Casa Premium
 
 on:
   workflow_dispatch:
     inputs:
       test_only:
-        description: "Testar somente o Telegram"
+        description: "Só testar o envio do Telegram"
         required: true
         type: boolean
-        default: true
+        default: false
   schedule:
-    - cron: "17 */6 * * *"
+    # a cada 3 horas (horário UTC; no Brasil = 0h, 3h, 6h, 9h, 12h, 15h, 18h, 21h e alguns minutos)
+    - cron: "17 */3 * * *"
 
 permissions:
   contents: read
@@ -22,27 +22,32 @@ concurrency:
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-node@v4
         with:
-          python-version: "3.12"
+          node-version: "22"
 
-      - name: Restaurar histórico
-        uses: actions/cache@v4
+      - name: Restaurar histórico de preços
+        uses: actions/cache/restore@v4
         with:
-          path: prices.sqlite3
-          key: casa-premium-${{ github.run_id }}
+          path: state.json.gz
+          key: casa-premium-state-${{ github.run_id }}
           restore-keys: |
-            casa-premium-
+            casa-premium-state-
 
-      - name: Instalar dependências
-        run: pip install -r requirements.txt
-
-      - name: Executar bot
+      - name: Consultar lojas e avisar
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TEST_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.test_only || false }}
-        run: python bot.py
+        run: node bot.mjs
+
+      - name: Guardar histórico de preços
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state.json.gz
+          key: casa-premium-state-${{ github.run_id }}

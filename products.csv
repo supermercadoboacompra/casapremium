@@ -1,2 +1,3 @@
-id,name,brand,url,alert_below_price,min_drop_percent
-# Substitua esta linha por produtos reais; cada produto precisa de uma URL direta.
+id,nome,marca,url,preco_alvo
+# Opcional: links avulsos de outras lojas. Uma linha por produto, exemplo:
+# cocotte-24-loja-x,Panela Redonda 24 cm,Le Creuset,https://www.loja.com.br/produto,1500
