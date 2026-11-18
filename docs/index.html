@@ -125,12 +125,10 @@ details.more-info summary{cursor:pointer;font-size:14px;color:var(--brand)}
   <div class="chips" id="brands"></div>
   <div class="tabs" role="tablist">
     <button class="tab" role="tab" data-tab="promo" aria-selected="true">Promoções <small id="npromo"></small></button>
-    <button class="tab" role="tab" data-tab="resumo" aria-selected="false">Resumo do dia</button>
     <button class="tab" role="tab" data-tab="todos" aria-selected="false">Produtos <small id="nall"></small></button>
   </div>
 </header>
 <section id="vpromo" class="view" style="padding:8px 16px 40px;max-width:760px;margin:0 auto"></section>
-<section id="vresumo" class="view" style="padding:8px 16px 40px;max-width:760px;margin:0 auto" hidden></section>
 <div class="bar view-todos" hidden>
   <span id="count"></span>
   <select id="sort" aria-label="Ordenar">
@@ -303,7 +301,7 @@ function compareQuery(name) {
 }
 
 let t;
-$("q").addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { shown = PAGE; if (tab === "resumo") setTab("todos"); else drawTab(); }, 150); });
+$("q").addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { shown = PAGE; drawTab(); }, 150); });
 $("clear").addEventListener("click", () => { $("q").value = ""; shown = PAGE; drawTab(); $("clear").hidden = true; $("q").focus(); });
 $("sort").addEventListener("change", () => { shown = PAGE; render(); });
 for (const id of ["fstore", "fmin", "fmax", "fstock", "foff", "flow", "fthyme"])
@@ -333,16 +331,10 @@ async function refresh() {
 $("refresh").addEventListener("click", refresh);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 setInterval(() => { if (!document.hidden) refresh(); }, 3 * 60000);
-// ---------- Promoções e Resumo do dia (mesmo conteúdo do Telegram: foto + texto completo) ----------
+// ---------- Promoções (mesmo conteúdo do Telegram: foto + texto completo) ----------
 let PROMOS = [], CUPS = [], tab = "promo";
 const TODAY = () => Math.floor(Date.now() / 86400000);
 const pctTxt = (from, p) => (from > p ? ` (−${Math.round(((from - p) / from) * 100)}%)` : "");
-const tvKind = (n) =>
-  /micro ?rgb/i.test(n) ? "Micro RGB" : /oled/i.test(n) ? "OLED" : /neo ?qled/i.test(n) ? "Neo QLED" :
-  /frame/i.test(n) ? "The Frame" : /mini ?led/i.test(n) ? "Mini LED" : /qled/i.test(n) ? "QLED" :
-  /business|lh55/i.test(n) ? "Business" : "Crystal UHD";
-const isTv55 = (n) => /samsung/i.test(n) && /\btv\b/i.test(n) && /\b55\s*("|”|''|pol)|\b(qn|un|ls|mrn|lh)55[a-z]/i.test(n) && !/suporte|controle|capa|cabo|pel[ií]cula|antena|soundbar|\bkit\b/i.test(n);
-
 // Gráfico do preço: degraus de cada mudança até hoje
 function chart(h, p) {
   if (!h || h.length < 2) return "";
@@ -425,38 +417,10 @@ function drawPromo() {
       : `<div class="empty">Nenhuma queda de preço registrada${brand ? ` para ${esc(brand)}` : ""} ainda. Assim que o robô avisar no Telegram, aparece aqui também.</div>`);
 }
 
-function drawResumo() {
-  const live = ALL.filter((r) => r.a && (!brand || r.b === brand));
-  const thyme = live.filter((r) => r.thyme && r.p >= 100).sort((a, b) => a.p - b.p);
-  const tvs = live.filter((r) => isTv55(r.n)).sort((a, b) => a.eff - b.eff);
-  const best = new Map();
-  for (const r of tvs) if (!best.has(tvKind(r.n))) best.set(tvKind(r.n), r);
-  const disc = live.filter((r) => r.off >= 0.2 && r.p >= 100).sort((a, b) => b.off - a.off);
-  const per = {};
-  const top = disc.filter((r) => (per[r.store] = (per[r.store] || 0) + 1) <= 3).slice(0, 15);
-  const since = Date.now() - 86400000;
-  const drops = PROMOS.filter((x) => Date.parse(x.t) >= since && (!brand || x.b === brand));
-  const stat = (n, t) => `<div class="stat"><b>${n.toLocaleString("pt-BR")}</b><span>${t}</span></div>`;
-  let h = `<h2 class="sec">Resumo do dia${brand ? ` · ${esc(brand)}` : ""}<small>O mesmo resumo que vai no Telegram, sempre atualizado.</small></h2>
-    <div class="stats">${stat(live.length, "produtos com estoque")}${stat(new Set(live.map((r) => r.store)).size, "lojas")}
-    ${stat(drops.length, "quedas de preço nas últimas 24h")}${stat(thyme.length, "Le Creuset Thyme em estoque")}
-    ${tvs.length ? stat(tvs.length, "ofertas de TV Samsung 55\"") : ""}${stat(disc.length, "descontos \"de/por\" acima de 20%")}</div>`;
-  if (drops.length) h += `<h2 class="sec">📉 Quedas de preço nas últimas 24h (${drops.length})</h2><div class="list">${drops.map((x) => bigCard(fromPromo(x))).join("")}</div>`;
-  if (thyme.length) h += `<h2 class="sec">🌿 Le Creuset Thyme em estoque (${thyme.length})<small>do menor para o maior preço</small></h2><div class="list">${thyme.map((r) => bigCard(fromItem(r, "🌿 Thyme em estoque"))).join("")}</div>`;
-  if (best.size) h += `<h2 class="sec">📺 TV Samsung 55" — o mais barato de cada tipo (${tvs.length} ofertas)</h2><div class="list">${[...best].map(([k, r]) =>
-    bigCard(fromItem(r, `📺 ${esc(k)}`, [`mais barato do tipo ${k} hoje, entre ${tvs.filter((x) => tvKind(x.n) === k).length} ofertas`]))).join("")}</div>`;
-  h += `<h2 class="sec">🏷️ Maiores descontos anunciados pelas lojas<small>é o "de/por" da própria loja; até 3 por loja</small></h2>` +
-    (top.length ? `<div class="list">${top.map((r) => bigCard(fromItem(r, `🏷️ −${Math.round(r.off * 100)}% anunciado`, [`a loja anuncia de ${brl(r.d)} por ${brl(r.p)}`]))).join("")}</div>` : `<div class="empty">Nenhum acima de 20%.</div>`);
-  if (CUPS.length) h += `<h2 class="sec">🎟️ Cupons e descontos anunciados nos sites</h2><div class="cupl">${CUPS.map((c) =>
-    `<div class="stat"><b style="font-size:16px">🏪 ${esc(c.l)}</b>${c.c.map((k, i) => `<div>🎟️ <code>${esc(k)}</code>${c.t?.[i] ? ` ${esc(c.t[i])}` : ""}</div>`).join("")}${c.x ? `<div>💠 ${esc(c.x)}</div>` : ""}</div>`).join("")}</div>`;
-  $("vresumo").innerHTML = h;
-}
-
 function setTab(t) {
   tab = t;
   for (const b of document.querySelectorAll(".tab")) b.setAttribute("aria-selected", String(b.dataset.tab === t));
   $("vpromo").hidden = t !== "promo";
-  $("vresumo").hidden = t !== "resumo";
   for (const el of document.querySelectorAll(".view-todos")) el.hidden = t !== "todos";
   drawTab();
   try { localStorage.setItem("cp-tab", t); } catch {}
@@ -464,20 +428,19 @@ function setTab(t) {
 function drawTab() {
   if (!ALL.length) return;
   if (tab === "promo") drawPromo();
-  else if (tab === "resumo") drawResumo();
   else render();
 }
 document.querySelector(".tabs").addEventListener("click", (e) => {
   const b = e.target.closest(".tab"); if (b) { setTab(b.dataset.tab); window.scrollTo({ top: 0 }); }
 });
-for (const id of ["vpromo", "vresumo"])
+for (const id of ["vpromo"])
   $(id).addEventListener("click", (e) => {
     const b = e.target.closest("[data-cmp]"); if (!b) return;
     $("q").value = compareQuery(b.dataset.cmp); brand = ""; $("sort").value = "price"; shown = PAGE;
     drawBrands(); setTab("todos"); window.scrollTo({ top: 0, behavior: "smooth" });
   });
 
-try { const saved = localStorage.getItem("cp-tab"); if (saved) setTab(saved); } catch {}
+try { const saved = localStorage.getItem("cp-tab"); if (saved === "promo" || saved === "todos") setTab(saved); } catch {}
 load();
 </script>
 </body>

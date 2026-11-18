@@ -7,11 +7,6 @@ on:
     paths: ["bot.mjs", ".github/workflows/main.yml"]
   workflow_dispatch:
     inputs:
-      resumo:
-        description: "Mandar o resumo do dia agora"
-        required: true
-        type: boolean
-        default: true
       test_only:
         description: "Só mandar um alerta de exemplo (não consulta as lojas)"
         required: true
@@ -59,7 +54,6 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           TEST_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.test_only }}
-          DIGEST: ${{ github.event_name == 'workflow_dispatch' && inputs.resumo }}
           # Smeg e Lazer Shop bloqueiam os servidores do GitHub: rodam no PC (casapremium-local)
           SKIP: smeg,lazershop
           CATALOG_FILE: catalogo.json
@@ -91,4 +85,4 @@ jobs:
         run: |
           espera=$(( 300 - ($(date +%s) - START) ))
           if [ "$espera" -gt 0 ]; then sleep "$espera"; fi
-          gh workflow run main.yml --repo "${{ github.repository }}" --ref main -f resumo=false -f test_only=false
+          gh workflow run main.yml --repo "${{ github.repository }}" --ref main -f test_only=false

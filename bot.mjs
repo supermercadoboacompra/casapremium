@@ -15,7 +15,6 @@ const TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
 const TEST_ONLY = process.env.TEST_ONLY === "true";
 const DRY_RUN = process.env.DRY_RUN === "true" || !TOKEN || !CHAT_ID;
-const FORCE_DIGEST = process.env.DIGEST === "true"; // manda o resumo do dia agora
 const ONLY = (process.env.ONLY || "").split(",").map((s) => s.trim()).filter(Boolean);
 
 const STATE_FILE = process.env.STATE_FILE || "state.json.gz";
@@ -111,17 +110,12 @@ const minPriceFor = (brand) => {
   return hit ? MIN_BY_BRAND[hit] : RULES.minPrice;
 };
 
-// Anotações: destacam peças de interesse no alerta e furam a fila do resumo.
+// Anotações: destacam peças de interesse no alerta e vão primeiro.
 // Produtos específicos acompanhados em lojas de eletro (qualquer marca da loja)
 const isSamsungTv55 = (name) =>
   /samsung/i.test(name) && /\btv\b/i.test(name) &&
   /\b55\s*("|”|''|pol)|\b(qn|un|ls|mrn|lh)55[a-z]/i.test(name) &&
   !/suporte|controle|capa|cabo|pel[ií]cula|antena|soundbar|\bkit\b/i.test(name);
-// Tipo de TV pelo nome (para "o mais barato de cada tipo")
-const tvKind = (n) =>
-  /micro ?rgb/i.test(n) ? "Micro RGB" : /oled/i.test(n) ? "OLED" : /neo ?qled/i.test(n) ? "Neo QLED" :
-  /frame/i.test(n) ? "The Frame" : /mini ?led/i.test(n) ? "Mini LED" : /qled/i.test(n) ? "QLED" :
-  /business|lh55/i.test(n) ? "Business" : "Crystal UHD";
 const WATCHES = [
   { label: "📺 TV Samsung 55\"", query: "smart tv samsung 55", kabum: "tv-samsung-55", match: isSamsungTv55, minPrice: 1500 },
 ];
@@ -844,112 +838,6 @@ async function sendAlert(a) {
   });
 }
 
-// Manda um título + vários blocos, quebrando em mais mensagens quando passa do limite do Telegram (4096)
-async function sendBlocks(title, blocks) {
-  let msg = title;
-  for (const b of blocks) {
-    if (msg.length + b.length + 2 > 3900) {
-      await tg("sendMessage", { text: msg, disable_web_page_preview: true });
-      msg = "";
-    }
-    msg += (msg ? "\n\n" : "") + b;
-  }
-  if (msg.trim()) await tg("sendMessage", { text: msg, disable_web_page_preview: true });
-}
-
-// Card completo (foto + texto igual ao do alerta) a partir do que o bot guardou de um produto
-function recordCard(state, r, nowDay, title, reasons = []) {
-  const h = r.h || [];
-  const prices = h.map((x) => x[1]);
-  const usual = h.length ? usualPrice(h, nowDay + 1) : null;
-  return {
-    title, reasons, brand: canonBrand(r.b), name: r.n, url: r.u, image: r.i, price: r.p, pix: r.px,
-    listPrice: r.lp, storeName: r.sn || r.s, coupons: state.coupons?.[r.s],
-    notes: NOTES.filter((n) => n.match({ brand: r.b, name: r.n, url: r.u })).map((n) => n.label),
-    prevPrice: h.length > 1 ? h[h.length - 2][1] : null,
-    usual: usual && usual !== r.p ? usual : null,
-    prevMin: prices.length > 1 ? Math.min(...prices.slice(0, -1)) : null,
-    stats: prices.length ? { since: h[0][0], min: Math.min(...prices), max: Math.max(...prices), changes: h.length - 1 } : null,
-  };
-}
-
-// Resumo diário: cada peça vai com foto e texto completo (Thyme, TVs, descontos, quedas das últimas 24h) + cupons
-async function sendDailyDigest(state, nowDay) {
-  // mesma peça pode entrar 2x (vitrine + busca por cor): fica uma por loja/nome/preço
-  const seen = new Set();
-  const live = Object.values(state.items)
-    .filter((r) => r.d >= nowDay - 1 && r.av !== false && r.p && (!r.s || STORES.some((x) => x.id === r.s)))
-    .filter((r) => {
-      const k = `${r.s}|${r.n}|${r.p}`;
-      return !seen.has(k) && seen.add(k);
-    });
-  const perStore = (list, n) => {
-    const c = {};
-    return list.filter((r) => (c[r.s] = (c[r.s] || 0) + 1) <= n);
-  };
-  const card = (r, title, reasons) => sendAlert(recordCard(state, r, nowDay, title, reasons)).catch((e) => console.log(`  resumo: ${e.message}`));
-
-  const thyme = live
-    .filter((r) => /creuset/i.test(r.b) && /thyme|tomilho/i.test(`${r.n} ${r.u}`) && r.p >= RULES.minPrice)
-    .sort((a, b) => a.p - b.p);
-  const disc = live
-    .filter((r) => r.lp && r.p >= minPriceFor(r.b))
-    .map((r) => ({ ...r, off: ((r.lp - r.p) / r.lp) * 100 }))
-    .filter((r) => r.off >= 20)
-    .sort((a, b) => b.off - a.off);
-  const topDisc = perStore(disc, 3).slice(0, 15);
-  const since = Date.now() - 24 * 3600000;
-  const drops = (state.promos || []).filter((x) => Date.parse(x.t) >= since);
-  const tvs = WATCHES.map((w) => {
-    const items = live.filter((r) => w.match(r.n)).sort((a, b) => (a.px || a.p) - (b.px || b.p));
-    const best = new Map();
-    for (const r of items) if (!best.has(tvKind(r.n))) best.set(tvKind(r.n), r);
-    return { w, items, best };
-  });
-
-  await tg("sendMessage", {
-    text: [
-      `☀️ <b>Resumo do dia · Casa Premium</b>`,
-      `👀 ${live.length.toLocaleString("pt-BR")} produtos acompanhados agora em ${new Set(live.map((r) => r.s)).size} loja(s)`,
-      `📉 Quedas de preço nas últimas 24h: ${drops.length}`,
-      `🌿 Le Creuset Thyme em estoque: ${thyme.length}`,
-      ...tvs.filter((t) => t.items.length).map(({ w, items, best }) => `${w.label}: ${items.length} ofertas, ${best.size} tipos`),
-      `🏷️ Descontos "de/por" acima de 20%: ${disc.length} (vão os ${topDisc.length} maiores)`,
-      ``,
-      `Cada peça chega abaixo com foto e detalhes. Tudo também no site: https://uabsoluut.github.io/casapremium/`,
-    ].join("\n"),
-    link_preview_options: { is_disabled: true },
-  });
-
-  if (thyme.length) {
-    await tg("sendMessage", { text: `🌿 <b>Le Creuset Thyme em estoque (${thyme.length})</b>\ndo menor para o maior preço` });
-    for (const r of thyme) await card(r, `🌿 <b>Thyme em estoque`);
-  }
-
-  for (const { w, items, best } of tvs) {
-    if (!items.length) continue;
-    await tg("sendMessage", { text: `${w.label} <b>— o mais barato de cada tipo hoje</b> (${items.length} ofertas acompanhadas)` });
-    for (const [k, r] of best) await card(r, `${w.label} <b>${esc(k)}`, [`mais barato do tipo ${k} hoje, entre ${items.filter((x) => tvKind(x.n) === k).length} ofertas`]);
-  }
-
-  await tg("sendMessage", {
-    text: `🏷️ <b>Maiores descontos anunciados pelas lojas hoje</b>\n<i>é o "de/por" da própria loja; até 3 por loja</i>` + (topDisc.length ? "" : "\n\nNenhum acima de 20%."),
-  });
-  for (const r of topDisc) await card(r, `🏷️ <b>−${r.off.toFixed(0)}% anunciado`, [`a loja anuncia de ${brl(r.lp)} por ${brl(r.p)}`]);
-
-  const cup = STORES.filter((s) => state.coupons?.[s.id]?.codes.length || state.coupons?.[s.id]?.pix);
-  if (cup.length) {
-    await sendBlocks(
-      `🎟️ <b>Cupons e descontos anunciados nos sites</b>`,
-      cup.map((s) => {
-        const c = state.coupons[s.id];
-        const parts = [...c.codes.map((k) => `🎟️ <code>${esc(k.code)}</code> (${esc(k.text.slice(0, 160))})`), c.pix ? `💠 ${esc(c.pix)}` : ""].filter(Boolean);
-        return `🏪 <b>${esc(s.name)}</b>\n${parts.join("\n")}`;
-      })
-    );
-  }
-}
-
 // Guarda cada promoção (o mesmo conteúdo do alerta) para a aba Promoções do site
 function logPromos(state, alerts) {
   const keepFrom = Date.now() - RULES.promosKeepDays * 86400000;
@@ -1106,14 +994,6 @@ async function main() {
     });
   }
 
-  // Resumo do dia (1x por dia a partir das 9h de Brasília, ou quando pedido)
-  const brtHour = (new Date().getUTCHours() + 21) % 24;
-  if (!ONLY.length && (FORCE_DIGEST || (brtHour >= 9 && state.lastDigest !== todayIso))) {
-    await sendDailyDigest(state, nowDay);
-    state.lastDigest = todayIso;
-    saveState(state);
-  }
-
   // Cupom novo apareceu no site de uma loja
   if (newCoupons.length && !firstRun) {
     await tg("sendMessage", {
@@ -1125,7 +1005,7 @@ async function main() {
 
   // anotados (ex.: Thyme) primeiro, depois as maiores quedas
   alerts.sort((x, y) => y.notes.length - x.notes.length || y.drop - x.drop);
-  // todas as promoções vão com foto e texto completo (sem resumo compacto)
+  // todas as promoções vão com foto e texto completo
   for (const a of alerts) {
     try {
       await sendAlert(a);
