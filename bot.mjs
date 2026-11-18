@@ -33,6 +33,7 @@ const RULES = {
   usualWindowDays: 30,
   minPrice: 100, // ignora peças e acessórios baratos (parafusos, gaxetas...)
   dropVsLast: 10, // % de queda desde a consulta anterior (avisa na hora, mesmo sem histórico longo)
+  bugDrop: 70, // queda de 70% ou mais = provável erro de preço na loja: alerta vem marcado "BUG"
   heavyEveryMin: 60, // lojas lentas (muitas páginas) são lidas no máximo 1x por hora
   couponsEveryMin: 60, // procura cupons nos sites 1x por hora
 };
@@ -55,7 +56,8 @@ const STORES = [
   // Lazer Shop bloqueia acesso em excesso: só as marcas que ela vende, a cada 15 min
   { id: "lazershop", name: "Lazer Shop", type: "lazer", host: "https://www.lazershop.com.br", everyMin: 15,
     brands: ["Wüsthof", "Peugeot", "Zwilling", "Staub", "Schott Zwiesel", "Bialetti"] },
-  { id: "altenburg", name: "Altenburg", type: "vtex", host: "https://www.altenburg.com.br", heavy: true },
+  // Altenburg vive em promoção: só avisa queda de 50% ou mais (pedido do usuário)
+  { id: "altenburg", name: "Altenburg", type: "vtex", host: "https://www.altenburg.com.br", heavy: true, minDrop: 50 },
   // multimarcas: só os produtos das marcas em BRANDS (Americanas busca marca por marca: 1x por hora)
   { id: "americanas", name: "Americanas", type: "vtexBrands", host: "https://www.americanas.com.br", heavy: true, skipBrands: ["Peugeot"] },
   // eletro: só os WATCHES (TVs Samsung 55"); a Americanas traz também Magalu, Fast Shop e Colombo como vendedores
@@ -741,14 +743,18 @@ function evaluate(state, row, nowDay, todayIso) {
     reasons.push("menor preço já visto");
   if (row.target && row.price <= row.target) reasons.push("atingiu seu preço-alvo");
   if (!reasons.length) return null;
+  // lojas com piso próprio (ex.: Altenburg = só 50% ou mais)
+  const storeMin = STORES.find((s) => s.id === row.store)?.minDrop;
+  if (storeMin && drop < storeMin && !(row.target && row.price <= row.target)) return null;
   if (rec.a && row.price > rec.a * (1 - RULES.realertStep / 100)) return null; // já avisado
+  const bug = drop >= RULES.bugDrop;
 
   rec.a = row.price;
   rec.at = todayIso;
   const notes = NOTES.filter((n) => n.match(row)).map((n) => n.label);
   const prices = h.map((x) => x[1]);
   const stats = { since: h[0][0], min: Math.min(...prices), max: Math.max(...prices), changes: h.length - 1 };
-  return { ...row, usual, prevMin, prevPrice, drop, reasons, notes, stats };
+  return { ...row, usual, prevMin, prevPrice, drop, bug, reasons, notes, stats };
 }
 
 // ---------- Telegram ----------
@@ -797,8 +803,11 @@ function alertText(a) {
   const pct = (from) => (from > a.price ? ` (−${(((from - a.price) / from) * 100).toFixed(0)}%)` : "");
   const title = a.title
     ? `${a.title}${a.brand ? ` · ${esc(a.brand)}` : ""}</b>`
-    : a.test ? `🧪 <b>Exemplo de alerta (teste) · ${esc(a.brand)}</b>` : `📉 <b>Baixou o preço · ${esc(a.brand)}</b>`;
+    : a.test ? `🧪 <b>Exemplo de alerta (teste) · ${esc(a.brand)}</b>`
+    : a.bug ? `⚠️ <b>BUG · ${esc(a.brand)}</b>`
+    : `📉 <b>Baixou o preço · ${esc(a.brand)}</b>`;
   const lines = [title, `${productEmoji(a.name)} ${esc(a.name)}`];
+  if (a.bug) lines.push(`BUG: queda de ${Math.round(a.drop)}% parece erro de preço da loja. Pode ser cancelado.`);
   if (a.notes.length) lines.push(esc(a.notes.join(" · ")));
   lines.push("", `💰 <b>Agora: ${brl(a.price)}</b>`);
   if (a.pix) lines.push(`💠 No Pix: ${brl(a.pix)}`);
@@ -848,7 +857,7 @@ function logPromos(state, alerts) {
       t: now, k: a.key, s: a.store, b: canonBrand(a.brand), n: a.name, u: a.url, i: a.image || "", l: a.storeName,
       p: a.price, x: a.pix || 0, d: a.listPrice || 0, e: a.prevPrice || 0, q: a.usual || 0, r: a.prevMin || 0,
       m: a.stats?.min || 0, c: a.stats?.max || 0, f: a.stats?.since || 0, g: a.stats?.changes || 0,
-      y: a.reasons, o: a.notes, pc: Math.round(a.drop || 0),
+      y: a.reasons, o: a.notes, pc: Math.round(a.drop || 0), ...(a.bug ? { bug: 1 } : {}),
       cp: (a.coupons?.codes || []).map((k) => ({ c: k.code, t: k.text.slice(0, 120) })), cx: a.coupons?.pix || "",
     });
   }

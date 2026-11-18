@@ -399,7 +399,7 @@ function fromPromo(x) {
   const item = ALL.find((r) => r.u === x.u);
   const when = new Date(x.t);
   return {
-    title: "📉 Baixou o preço", why: x.y, n: x.n, b: x.b, u: x.u, i: x.i, store: x.l, p: x.p, x: x.x, lp: x.d,
+    title: x.bug ? `⚠️ BUG (queda de ${x.pc}%: parece erro de preço da loja)` : "📉 Baixou o preço", why: x.y, n: x.n, b: x.b, u: x.u, i: x.i, store: x.l, p: x.p, x: x.x, lp: x.d,
     prev: x.e, usual: x.q, prevMin: x.r, min: x.m, max: x.c, since: x.f, changes: x.g, notes: x.o || [],
     coupons: (x.cp || []).map((k) => ({ c: k.c, t: k.t })), pixTxt: x.cx, h: item?.h,
     when: `Avisado em ${when.toLocaleDateString("pt-BR")} às ${when.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}` +
