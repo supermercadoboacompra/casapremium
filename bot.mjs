@@ -30,7 +30,7 @@ const RULES = {
   newLowMargin: 5, // % abaixo do menor preço já visto
   minHistoryDays: 3, // dias de histórico antes de considerar "menor preço"
   realertStep: 3, // só avisa de novo se cair mais 3% depois do último aviso
-  maxSinglePerRun: 12, // alertas individuais por rodada; o resto vai num resumo
+  promosKeepDays: 14, // promoções mostradas no site (aba Promoções)
   usualWindowDays: 30,
   minPrice: 100, // ignora peças e acessórios baratos (parafusos, gaxetas...)
   dropVsLast: 10, // % de queda desde a consulta anterior (avisa na hora, mesmo sem histórico longo)
@@ -117,6 +117,11 @@ const isSamsungTv55 = (name) =>
   /samsung/i.test(name) && /\btv\b/i.test(name) &&
   /\b55\s*("|”|''|pol)|\b(qn|un|ls|mrn|lh)55[a-z]/i.test(name) &&
   !/suporte|controle|capa|cabo|pel[ií]cula|antena|soundbar|\bkit\b/i.test(name);
+// Tipo de TV pelo nome (para "o mais barato de cada tipo")
+const tvKind = (n) =>
+  /micro ?rgb/i.test(n) ? "Micro RGB" : /oled/i.test(n) ? "OLED" : /neo ?qled/i.test(n) ? "Neo QLED" :
+  /frame/i.test(n) ? "The Frame" : /mini ?led/i.test(n) ? "Mini LED" : /qled/i.test(n) ? "QLED" :
+  /business|lh55/i.test(n) ? "Business" : "Crystal UHD";
 const WATCHES = [
   { label: "📺 TV Samsung 55\"", query: "smart tv samsung 55", kabum: "tv-samsung-55", match: isSamsungTv55, minPrice: 1500 },
 ];
@@ -663,18 +668,26 @@ function exportCatalog(state, nowDay, file) {
     if (seen.has(k)) continue;
     seen.add(k);
     const prices = (r.h || []).map((x) => x[1]);
+    const notes = NOTES.filter((n) => n.match({ brand: r.b, name: r.n, url: r.u })).map((n) => n.label);
+    const usual = r.h?.length ? usualPrice(r.h, nowDay + 1) : null;
     items.push({
       b: canonBrand(r.b), n: r.n, u: r.u, i: r.i || "", l: r.sn || r.s || "",
       p: r.p, x: r.px || 0, d: r.lp || 0, a: r.av === false ? 0 : 1,
       m: prices.length ? Math.min(...prices) : r.p, c: prices.length ? Math.max(...prices) : r.p,
       s: r.h?.[0]?.[0] || nowDay, v: r.d,
+      h: (r.h || []).slice(-40), // histórico de mudanças [dia, preço] para o gráfico
+      q: usual && usual !== r.p ? usual : 0, // preço padrão (30 dias)
+      ...(notes.length ? { o: notes } : {}),
+      ...(r.at ? { w: r.at, z: r.a } : {}), // último aviso de queda (data e preço)
     });
   }
   const cupons = STORES.filter((s) => state.coupons?.[s.id]?.codes?.length || state.coupons?.[s.id]?.pix).map((s) => ({
-    l: s.name, c: state.coupons[s.id].codes.map((k) => k.code), x: state.coupons[s.id].pix || "",
+    l: s.name, c: state.coupons[s.id].codes.map((k) => k.code), t: state.coupons[s.id].codes.map((k) => k.text.slice(0, 120)),
+    x: state.coupons[s.id].pix || "",
   }));
-  fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), items, cupons }));
-  console.log(`Catálogo do site: ${items.length} produtos em ${file}`);
+  const promos = (state.promos || []).filter((x) => STORES.some((s) => s.id === x.s) || !x.s);
+  fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), items, cupons, promos }));
+  console.log(`Catálogo do site: ${items.length} produtos, ${promos.length} promoções em ${file}`);
 }
 
 // Preço "de costume": o preço que ficou mais dias no ar nos últimos 30 dias.
@@ -788,7 +801,9 @@ const ddmm = (day) => new Date(day * 86400000).toISOString().slice(5, 10).split(
 // Tom: fatos com emojis para leitura rápida. Nada de "imperdível".
 function alertText(a) {
   const pct = (from) => (from > a.price ? ` (−${(((from - a.price) / from) * 100).toFixed(0)}%)` : "");
-  const title = a.test ? `🧪 <b>Exemplo de alerta (teste) · ${esc(a.brand)}</b>` : `📉 <b>Baixou o preço · ${esc(a.brand)}</b>`;
+  const title = a.title
+    ? `${a.title}${a.brand ? ` · ${esc(a.brand)}` : ""}</b>`
+    : a.test ? `🧪 <b>Exemplo de alerta (teste) · ${esc(a.brand)}</b>` : `📉 <b>Baixou o preço · ${esc(a.brand)}</b>`;
   const lines = [title, `${productEmoji(a.name)} ${esc(a.name)}`];
   if (a.notes.length) lines.push(esc(a.notes.join(" · ")));
   lines.push("", `💰 <b>Agora: ${brl(a.price)}</b>`);
@@ -797,8 +812,9 @@ function alertText(a) {
   if (a.usual) lines.push(`📊 Preço padrão (30 dias): ${brl(a.usual)}${pct(a.usual)}`);
   if (a.prevMin) lines.push(`🏷️ Menor preço antes deste: ${brl(a.prevMin)}`);
   if (a.stats) lines.push(`🗓️ Desde ${ddmm(a.stats.since)}: menor ${brl(a.stats.min)} · maior ${brl(a.stats.max)}`);
-  if (a.listPrice) lines.push(`🧾 "De" da loja: ${brl(a.listPrice)}`);
-  lines.push(`✅ Por quê: ${esc(a.reasons.join("; "))}`);
+  if (a.listPrice && a.listPrice > a.price) lines.push(`🧾 "De" da loja: ${brl(a.listPrice)}${pct(a.listPrice)}`);
+  if (a.stats?.changes) lines.push(`🔁 Mudanças de preço registradas: ${a.stats.changes}`);
+  if (a.reasons?.length) lines.push(`✅ Por quê: ${esc(a.reasons.join("; "))}`);
   lines.push(`🏪 Loja: ${esc(a.storeName)}`);
   const c = a.coupons;
   if (c?.pix && !a.pix) lines.push(`💠 Site anuncia: ${esc(c.pix)}`);
@@ -809,14 +825,23 @@ function alertText(a) {
 
 async function sendAlert(a) {
   const text = alertText(a);
-  if (a.image) {
+  const image = /^https?:\/\//i.test(a.image || "") ? a.image : "";
+  // legenda de foto no Telegram vai até 1024 caracteres (sem contar as tags)
+  const visible = text.replace(/<[^>]+>/g, "").replace(/&(amp|lt|gt);/g, "x").length;
+  if (image && visible <= 1024) {
     try {
-      return await tg("sendPhoto", { photo: a.image, caption: text });
+      return await tg("sendPhoto", { photo: image, caption: text });
     } catch (e) {
-      console.log(`  foto falhou (${e.message}), mandando só texto`);
+      console.log(`  foto falhou (${e.message}), mandando a imagem como prévia`);
     }
   }
-  await tg("sendMessage", { text, disable_web_page_preview: false });
+  // texto longo (ou foto recusada): a imagem vai como prévia grande em cima do texto
+  await tg("sendMessage", {
+    text,
+    link_preview_options: image
+      ? { url: image, prefer_large_media: true, show_above_text: true }
+      : { url: a.url, prefer_large_media: true, show_above_text: true },
+  });
 }
 
 // Manda um título + vários blocos, quebrando em mais mensagens quando passa do limite do Telegram (4096)
@@ -832,24 +857,23 @@ async function sendBlocks(title, blocks) {
   if (msg.trim()) await tg("sendMessage", { text: msg, disable_web_page_preview: true });
 }
 
-// Bloco de um produto: nome, preço, loja e "Link: ..."
-function itemBlock({ name, brand, price, pix, store, url, extra = "", notes = [] }) {
-  const head = `${productEmoji(name)} <b>${esc(brand ? `${brand} · ` : "")}${esc(name.slice(0, 80))}</b>${notes.length ? " " + esc(notes.join(" ")) : ""}`;
-  const info = `💰 ${brl(price)}${pix ? ` · 💠 Pix ${brl(pix)}` : ""}${extra} · 🏪 ${esc(store)}`;
-  return `${head}\n${info}\n🔗 Link: ${esc(url)}`;
+// Card completo (foto + texto igual ao do alerta) a partir do que o bot guardou de um produto
+function recordCard(state, r, nowDay, title, reasons = []) {
+  const h = r.h || [];
+  const prices = h.map((x) => x[1]);
+  const usual = h.length ? usualPrice(h, nowDay + 1) : null;
+  return {
+    title, reasons, brand: canonBrand(r.b), name: r.n, url: r.u, image: r.i, price: r.p, pix: r.px,
+    listPrice: r.lp, storeName: r.sn || r.s, coupons: state.coupons?.[r.s],
+    notes: NOTES.filter((n) => n.match({ brand: r.b, name: r.n, url: r.u })).map((n) => n.label),
+    prevPrice: h.length > 1 ? h[h.length - 2][1] : null,
+    usual: usual && usual !== r.p ? usual : null,
+    prevMin: prices.length > 1 ? Math.min(...prices.slice(0, -1)) : null,
+    stats: prices.length ? { since: h[0][0], min: Math.min(...prices), max: Math.max(...prices), changes: h.length - 1 } : null,
+  };
 }
 
-async function sendDigest(list, title) {
-  await sendBlocks(
-    `📉 <b>${esc(title)}</b>`,
-    list.map((a) =>
-      itemBlock({ name: a.name, brand: a.brand, price: a.price, pix: a.pix, store: a.storeName, url: a.url, notes: a.notes,
-        extra: a.drop ? ` · ⏪ −${a.drop.toFixed(0)}%` : "" })
-    )
-  );
-}
-
-// Resumo diário: peças Thyme em estoque, maiores descontos anunciados pelas lojas e cupons.
+// Resumo diário: cada peça vai com foto e texto completo (Thyme, TVs, descontos, quedas das últimas 24h) + cupons
 async function sendDailyDigest(state, nowDay) {
   // mesma peça pode entrar 2x (vitrine + busca por cor): fica uma por loja/nome/preço
   const seen = new Set();
@@ -863,45 +887,55 @@ async function sendDailyDigest(state, nowDay) {
     const c = {};
     return list.filter((r) => (c[r.s] = (c[r.s] || 0) + 1) <= n);
   };
-  const total = live.length;
-  const block = (r, extra = "") =>
-    itemBlock({ name: r.n, price: r.p, pix: r.px, store: r.sn || r.s, url: r.u, extra });
+  const card = (r, title, reasons) => sendAlert(recordCard(state, r, nowDay, title, reasons)).catch((e) => console.log(`  resumo: ${e.message}`));
 
   const thyme = live
     .filter((r) => /creuset/i.test(r.b) && /thyme|tomilho/i.test(`${r.n} ${r.u}`) && r.p >= RULES.minPrice)
     .sort((a, b) => a.p - b.p);
-  await sendBlocks(
-    `☀️ <b>Resumo do dia · Casa Premium</b>\n👀 ${total.toLocaleString("pt-BR")} produtos acompanhados agora\n\n🌿 <b>Le Creuset Thyme em estoque (${thyme.length})</b>`,
-    thyme.slice(0, 25).map((r) => block(r)).concat(thyme.length > 25 ? [`… e mais ${thyme.length - 25}.`] : [])
-  );
-
-  // Produtos acompanhados (ex.: TVs Samsung 55"): o mais barato de cada tipo hoje
-  for (const w of WATCHES) {
-    const items = live.filter((r) => w.match(r.n)).sort((a, b) => (a.px || a.p) - (b.px || b.p));
-    if (!items.length) continue;
-    const kind = (n) =>
-      /micro ?rgb/i.test(n) ? "Micro RGB" : /oled/i.test(n) ? "OLED" : /neo ?qled/i.test(n) ? "Neo QLED" :
-      /frame/i.test(n) ? "The Frame" : /mini ?led/i.test(n) ? "Mini LED" : /qled/i.test(n) ? "QLED" :
-      /business|lh55/i.test(n) ? "Business" : "Crystal UHD";
-    const best = new Map();
-    for (const r of items) if (!best.has(kind(r.n))) best.set(kind(r.n), r);
-    await sendBlocks(
-      `${w.label} <b>— o mais barato de cada tipo hoje</b> (${items.length} ofertas acompanhadas)`,
-      [...best].map(([k, r]) => `<b>${esc(k)}</b>\n` + block(r))
-    );
-  }
-
   const disc = live
     .filter((r) => r.lp && r.p >= minPriceFor(r.b))
     .map((r) => ({ ...r, off: ((r.lp - r.p) / r.lp) * 100 }))
     .filter((r) => r.off >= 20)
     .sort((a, b) => b.off - a.off);
-  await sendBlocks(
-    `🏷️ <b>Maiores descontos anunciados pelas lojas hoje</b>\n<i>é o "de/por" da própria loja; o histórico do bot ainda está crescendo</i>`,
-    disc.length
-      ? perStore(disc, 3).slice(0, 15).map((r) => block(r, ` · 🧾 de ${brl(r.lp)} (−${r.off.toFixed(0)}%)`))
-      : ["Nenhum acima de 20%."]
-  );
+  const topDisc = perStore(disc, 3).slice(0, 15);
+  const since = Date.now() - 24 * 3600000;
+  const drops = (state.promos || []).filter((x) => Date.parse(x.t) >= since);
+  const tvs = WATCHES.map((w) => {
+    const items = live.filter((r) => w.match(r.n)).sort((a, b) => (a.px || a.p) - (b.px || b.p));
+    const best = new Map();
+    for (const r of items) if (!best.has(tvKind(r.n))) best.set(tvKind(r.n), r);
+    return { w, items, best };
+  });
+
+  await tg("sendMessage", {
+    text: [
+      `☀️ <b>Resumo do dia · Casa Premium</b>`,
+      `👀 ${live.length.toLocaleString("pt-BR")} produtos acompanhados agora em ${new Set(live.map((r) => r.s)).size} loja(s)`,
+      `📉 Quedas de preço nas últimas 24h: ${drops.length}`,
+      `🌿 Le Creuset Thyme em estoque: ${thyme.length}`,
+      ...tvs.filter((t) => t.items.length).map(({ w, items, best }) => `${w.label}: ${items.length} ofertas, ${best.size} tipos`),
+      `🏷️ Descontos "de/por" acima de 20%: ${disc.length} (vão os ${topDisc.length} maiores)`,
+      ``,
+      `Cada peça chega abaixo com foto e detalhes. Tudo também no site: https://uabsoluut.github.io/casapremium/`,
+    ].join("\n"),
+    link_preview_options: { is_disabled: true },
+  });
+
+  if (thyme.length) {
+    await tg("sendMessage", { text: `🌿 <b>Le Creuset Thyme em estoque (${thyme.length})</b>\ndo menor para o maior preço` });
+    for (const r of thyme) await card(r, `🌿 <b>Thyme em estoque`);
+  }
+
+  for (const { w, items, best } of tvs) {
+    if (!items.length) continue;
+    await tg("sendMessage", { text: `${w.label} <b>— o mais barato de cada tipo hoje</b> (${items.length} ofertas acompanhadas)` });
+    for (const [k, r] of best) await card(r, `${w.label} <b>${esc(k)}`, [`mais barato do tipo ${k} hoje, entre ${items.filter((x) => tvKind(x.n) === k).length} ofertas`]);
+  }
+
+  await tg("sendMessage", {
+    text: `🏷️ <b>Maiores descontos anunciados pelas lojas hoje</b>\n<i>é o "de/por" da própria loja; até 3 por loja</i>` + (topDisc.length ? "" : "\n\nNenhum acima de 20%."),
+  });
+  for (const r of topDisc) await card(r, `🏷️ <b>−${r.off.toFixed(0)}% anunciado`, [`a loja anuncia de ${brl(r.lp)} por ${brl(r.p)}`]);
 
   const cup = STORES.filter((s) => state.coupons?.[s.id]?.codes.length || state.coupons?.[s.id]?.pix);
   if (cup.length) {
@@ -909,11 +943,28 @@ async function sendDailyDigest(state, nowDay) {
       `🎟️ <b>Cupons e descontos anunciados nos sites</b>`,
       cup.map((s) => {
         const c = state.coupons[s.id];
-        const parts = [...c.codes.map((k) => `<code>${esc(k.code)}</code> (${esc(k.text.slice(0, 90))})`), c.pix ? `💠 ${esc(c.pix)}` : ""].filter(Boolean);
-        return `🏪 <b>${esc(s.name)}</b>: ${parts.join(" · ")}`;
+        const parts = [...c.codes.map((k) => `🎟️ <code>${esc(k.code)}</code> (${esc(k.text.slice(0, 160))})`), c.pix ? `💠 ${esc(c.pix)}` : ""].filter(Boolean);
+        return `🏪 <b>${esc(s.name)}</b>\n${parts.join("\n")}`;
       })
     );
   }
+}
+
+// Guarda cada promoção (o mesmo conteúdo do alerta) para a aba Promoções do site
+function logPromos(state, alerts) {
+  const keepFrom = Date.now() - RULES.promosKeepDays * 86400000;
+  state.promos = (state.promos || []).filter((x) => Date.parse(x.t) >= keepFrom);
+  const now = new Date().toISOString();
+  for (const a of alerts) {
+    state.promos.unshift({
+      t: now, k: a.key, s: a.store, b: canonBrand(a.brand), n: a.name, u: a.url, i: a.image || "", l: a.storeName,
+      p: a.price, x: a.pix || 0, d: a.listPrice || 0, e: a.prevPrice || 0, q: a.usual || 0, r: a.prevMin || 0,
+      m: a.stats?.min || 0, c: a.stats?.max || 0, f: a.stats?.since || 0, g: a.stats?.changes || 0,
+      y: a.reasons, o: a.notes, pc: Math.round(a.drop || 0),
+      cp: (a.coupons?.codes || []).map((k) => ({ c: k.code, t: k.text.slice(0, 120) })), cx: a.coupons?.pix || "",
+    });
+  }
+  state.promos = state.promos.slice(0, 400);
 }
 
 // ---------- principal ----------
@@ -1027,6 +1078,8 @@ async function main() {
     }
   }
 
+  for (const a of alerts) a.coupons = state.coupons[a.store];
+  logPromos(state, alerts);
   state.runs = (state.runs || 0) + 1;
   saveState(state); // salva antes de enviar: se o Telegram falhar, não repete avisos em massa
   if (process.env.CATALOG_FILE) {
@@ -1053,8 +1106,6 @@ async function main() {
     });
   }
 
-  for (const a of alerts) a.coupons = state.coupons[a.store];
-
   // Resumo do dia (1x por dia a partir das 9h de Brasília, ou quando pedido)
   const brtHour = (new Date().getUTCHours() + 21) % 24;
   if (!ONLY.length && (FORCE_DIGEST || (brtHour >= 9 && state.lastDigest !== todayIso))) {
@@ -1074,16 +1125,14 @@ async function main() {
 
   // anotados (ex.: Thyme) primeiro, depois as maiores quedas
   alerts.sort((x, y) => y.notes.length - x.notes.length || y.drop - x.drop);
-  const singles = alerts.slice(0, RULES.maxSinglePerRun);
-  const extra = alerts.slice(RULES.maxSinglePerRun);
-  for (const a of singles) {
+  // todas as promoções vão com foto e texto completo (sem resumo compacto)
+  for (const a of alerts) {
     try {
       await sendAlert(a);
     } catch (e) {
       console.log(`Falha ao avisar ${a.key}: ${e.message}`);
     }
   }
-  if (extra.length) await sendDigest(extra, `+${extra.length} quedas de preço nesta rodada`);
   if (broken.length)
     await tg("sendMessage", {
       text: `⚠️ Não consegui ler ${esc(broken.join(", "))} nas últimas 3 consultas. A loja pode ter mudado o site.`,
