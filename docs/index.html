@@ -373,6 +373,7 @@ function who(b, l) {
 }
 // Preço no cartão (com parcelas sem juros) e no Pix: exato da loja, ou pelo desconto anunciado no site
 function pay(p, x, pi, l, was) {
+  if (!(Array.isArray(pi) && Number.isInteger(pi[0]) && Number.isFinite(pi[1]))) pi = null;
   const store = String(l || "").replace(/ \(vendido por .+\)$/, "");
   let pix = x && x < p ? x : 0, calc = false;
   if (!pix) {

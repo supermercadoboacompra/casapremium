@@ -306,7 +306,7 @@ async function readVtex(store) {
           price: offer.Price,
           listPrice: offer.ListPrice > offer.Price ? offer.ListPrice : null,
           pix: pix > 0 && pix < offer.Price ? pix : null,
-          inst: inst ? [inst.NumberOfInstallments, inst.Value] : null,
+          inst: inst && Number.isInteger(+inst.NumberOfInstallments) && Number.isFinite(+inst.Value) && +inst.Value > 0 ? [+inst.NumberOfInstallments, +inst.Value] : null,
           available: offer.AvailableQuantity > 0,
           seller: offer.seller,
         });
