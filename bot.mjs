@@ -288,6 +288,10 @@ async function readVtex(store) {
             .filter((x) => /pix/i.test(x.PaymentSystemName) && x.NumberOfInstallments === 1)
             .map((x) => x.Value)
         );
+        // parcelas sem juros no cartão (maior número de vezes sem juros)
+        const inst = (offer.Installments || [])
+          .filter((x) => !/pix|boleto/i.test(x.PaymentSystemName) && x.NumberOfInstallments > 1 && !x.InterestRate)
+          .sort((a, b) => b.NumberOfInstallments - a.NumberOfInstallments)[0];
         // variação (cor/tamanho): só o que difere do nome do produto, sem "Único"
         let v = (it.name || "").trim();
         if (v.startsWith(p.productName)) v = v.slice(p.productName.length);
@@ -302,6 +306,7 @@ async function readVtex(store) {
           price: offer.Price,
           listPrice: offer.ListPrice > offer.Price ? offer.ListPrice : null,
           pix: pix > 0 && pix < offer.Price ? pix : null,
+          inst: inst ? [inst.NumberOfInstallments, inst.Value] : null,
           available: offer.AvailableQuantity > 0,
           seller: offer.seller,
         });
@@ -668,7 +673,7 @@ function exportCatalog(state, nowDay, file) {
     const usual = r.h?.length ? usualPrice(r.h, nowDay + 1) : null;
     items.push({
       b: canonBrand(r.b), n: r.n, u: r.u, i: r.i || "", l: r.sn || r.s || "",
-      p: r.p, x: r.px || 0, d: r.lp || 0, a: r.av === false ? 0 : 1,
+      p: r.p, x: r.px || 0, ...(r.pi ? { pi: r.pi } : {}), d: r.lp || 0, a: r.av === false ? 0 : 1,
       m: prices.length ? Math.min(...prices) : r.p, c: prices.length ? Math.max(...prices) : r.p,
       s: r.h?.[0]?.[0] || nowDay, v: r.d,
       h: (r.h || []).slice(-40), // histórico de mudanças [dia, preço] para o gráfico
@@ -705,7 +710,7 @@ function evaluate(state, row, nowDay, todayIso) {
   const rec = (state.items[row.key] ||= { h: [] });
   Object.assign(rec, {
     b: row.brand, n: row.name, u: row.url, i: row.image, s: row.store, sn: row.storeName,
-    lp: row.listPrice || null, px: row.pix || null, p: row.price, av: row.available, d: nowDay,
+    lp: row.listPrice || null, px: row.pix || null, pi: row.inst || null, p: row.price, av: row.available, d: nowDay,
   });
   const h = rec.h;
   const last = h.length ? h[h.length - 1] : null;
@@ -798,6 +803,14 @@ function productEmoji(name) {
 
 const ddmm = (day) => new Date(day * 86400000).toISOString().slice(5, 10).split("-").reverse().join("/");
 
+// Pix: preço exato da loja; senão o desconto anunciado no site; senão o mesmo do cartão
+function pixLine(price, pix, announced) {
+  if (pix && pix < price) return `💠 <b>No Pix: ${brl(pix)}</b> (−${Math.round(((price - pix) / price) * 100)}%)`;
+  const pc = parseInt((String(announced || "").match(/(\d{1,2})\s*%/) || [])[1] || "0", 10);
+  if (pc) return `💠 <b>No Pix: ${brl(Math.round(price * (100 - pc)) / 100)}</b> (calculado pelo desconto de ${pc}% anunciado)`;
+  return `💠 No Pix: ${brl(price)} (mesmo preço, a loja não anuncia desconto)`;
+}
+
 // Tom: fatos com emojis para leitura rápida. Nada de "imperdível".
 function alertText(a) {
   const pct = (from) => (from > a.price ? ` (−${(((from - a.price) / from) * 100).toFixed(0)}%)` : "");
@@ -809,8 +822,9 @@ function alertText(a) {
   const lines = [title, `${productEmoji(a.name)} ${esc(a.name)}`];
   if (a.bug) lines.push(`BUG: queda de ${Math.round(a.drop)}% parece erro de preço da loja. Pode ser cancelado.`);
   if (a.notes.length) lines.push(esc(a.notes.join(" · ")));
-  lines.push("", `💰 <b>Agora: ${brl(a.price)}</b>`);
-  if (a.pix) lines.push(`💠 No Pix: ${brl(a.pix)}`);
+  const c = a.coupons;
+  lines.push("", `💳 <b>No cartão: ${brl(a.price)}</b>${a.inst ? ` (até ${a.inst[0]}x de ${brl(a.inst[1])} sem juros)` : ""}`);
+  lines.push(pixLine(a.price, a.pix, c?.pix));
   if (a.prevPrice) lines.push(`⏪ Antes: ${brl(a.prevPrice)}${a.prevPrice === a.price ? " (sem mudança)" : pct(a.prevPrice)}`);
   if (a.usual) lines.push(`📊 Preço padrão (30 dias): ${brl(a.usual)}${pct(a.usual)}`);
   if (a.prevMin) lines.push(`🏷️ Menor preço antes deste: ${brl(a.prevMin)}`);
@@ -819,8 +833,6 @@ function alertText(a) {
   if (a.stats?.changes) lines.push(`🔁 Mudanças de preço registradas: ${a.stats.changes}`);
   if (a.reasons?.length) lines.push(`✅ Por quê: ${esc(a.reasons.join("; "))}`);
   lines.push(`🏪 Loja: ${esc(a.storeName)}`);
-  const c = a.coupons;
-  if (c?.pix && !a.pix) lines.push(`💠 Site anuncia: ${esc(c.pix)}`);
   for (const k of c?.codes || []) lines.push(`🎟️ Cupom: <code>${esc(k.code)}</code> (${esc(k.text.slice(0, 90))})`);
   lines.push("", `🔗 Link: ${esc(a.url)}`);
   return lines.join("\n");
@@ -855,7 +867,7 @@ function logPromos(state, alerts) {
   for (const a of alerts) {
     state.promos.unshift({
       t: now, k: a.key, s: a.store, b: canonBrand(a.brand), n: a.name, u: a.url, i: a.image || "", l: a.storeName,
-      p: a.price, x: a.pix || 0, d: a.listPrice || 0, e: a.prevPrice || 0, q: a.usual || 0, r: a.prevMin || 0,
+      p: a.price, x: a.pix || 0, ...(a.inst ? { pi: a.inst } : {}), d: a.listPrice || 0, e: a.prevPrice || 0, q: a.usual || 0, r: a.prevMin || 0,
       m: a.stats?.min || 0, c: a.stats?.max || 0, f: a.stats?.since || 0, g: a.stats?.changes || 0,
       y: a.reasons, o: a.notes, pc: Math.round(a.drop || 0), ...(a.bug ? { bug: 1 } : {}),
       cp: (a.coupons?.codes || []).map((k) => ({ c: k.code, t: k.text.slice(0, 120) })), cx: a.coupons?.pix || "",
