@@ -4,7 +4,7 @@ on:
   # toda atualização do bot roda uma consulta completa
   push:
     branches: [main]
-    paths: ["bot.mjs", "flights.mjs", ".github/workflows/main.yml"]
+    paths: ["bot.mjs", "flights.mjs", "deals.mjs", ".github/workflows/main.yml"]
   workflow_dispatch:
     inputs:
       test_only:

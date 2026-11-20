@@ -11,6 +11,7 @@
 
 import fs from "node:fs";
 import zlib from "node:zlib";
+import { checkDeals, dealCaption, DEAL_RULES } from "./deals.mjs";
 import { checkFlights, exportFlights, flightAlertText, flightBaselineText, flightsEnabled, FLIGHT_RULES } from "./flights.mjs";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -1010,6 +1011,19 @@ async function main() {
     }
   }
 
+  // Promoções de passagem dos blogs Melhores Destinos e Passagens Imperdíveis (a cada 15 min)
+  let blogDeals = [];
+  if (ONLY.length ? ONLY.includes("blogs") : due("blogs", DEAL_RULES.everyMin)) {
+    try {
+      const r = await checkDeals({ state, nowDay });
+      blogDeals = r.deals;
+      state.lastRead.blogs = Date.now();
+      console.log(`OK Blogs de passagem: ${r.read} posts lidos, ${blogDeals.length} promoções novas${r.errors.length ? ` (falhas: ${r.errors.join("; ")})` : ""}`);
+    } catch (e) {
+      console.log(`ERRO Blogs de passagem: ${e.message}`);
+    }
+  }
+
   for (const a of alerts) a.coupons = state.coupons[a.store];
   logPromos(state, alerts);
   state.runs = (state.runs || 0) + 1;
@@ -1062,6 +1076,15 @@ async function main() {
     const t = flightBaselineText(state, { brl, esc });
     if (t) {
       try { await tg("sendMessage", { text: t }); state.flightsIntro = "v2"; saveState(state); } catch (e) { console.log(`Falha na mensagem inicial de passagens: ${e.message}`); }
+    }
+  }
+  for (const d of blogDeals) {
+    const caption = dealCaption(d, { esc });
+    try {
+      if (d.image) await tg("sendPhoto", { photo: d.image, caption });
+      else throw new Error("sem foto");
+    } catch {
+      try { await tg("sendMessage", { text: caption, link_preview_options: { is_disabled: true } }); } catch (e) { console.log(`Falha ao avisar promoção do blog: ${e.message}`); }
     }
   }
   flightAlerts.sort((x, y) => (y.lm ? 1 : 0) - (x.lm ? 1 : 0) || x.price / (x.usual || x.price) - y.price / (y.usual || y.price));
