@@ -14,6 +14,8 @@
 //   FLIGHT_DESTS=ORL,NAS,ROM,...    (códigos de cidade IATA)
 
 const TOKEN = process.env.TRAVELPAYOUTS_TOKEN || "";
+// Lua de mel em agosto de 2027 (pedido do usuário em 20/11/2026): só viagens com ida nesse mês
+const MONTHS = (process.env.FLIGHT_MONTHS || "2027-08").split(",").map((s) => s.trim()).filter(Boolean);
 const ORIGINS = (process.env.FLIGHT_ORIGINS || "LDB,MGF,CWB,SAO").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
 
 // Destinos pedidos pelo usuário (20/11/2026): Orlando, Roma, Bahamas e Europa
@@ -46,8 +48,7 @@ const AIRLINE_SITE = {
 };
 
 export const FLIGHT_RULES = {
-  everyMin: 180, // a fonte atualiza poucas vezes por dia: uma varredura a cada 3 h
-  months: 6, // mês atual + 5 seguintes
+  everyMin: 60, // só agosto/2027: 72 consultas por varredura, cabe 1x por hora
   dropVsUsual: 12, // % abaixo do preço de costume da rota naquele mês
   newLowMargin: 5, // % abaixo do menor preço já visto
   minHistoryDays: 3, // dias acompanhando a rota antes de avisar queda
@@ -59,13 +60,6 @@ export const flightsEnabled = () => !!TOKEN;
 
 const API = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-function monthsAhead(n) {
-  const out = [];
-  const d = new Date();
-  for (let i = 0; i < n; i++) out.push(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + i, 1)).toISOString().slice(0, 7));
-  return out;
-}
 
 async function fetchJson(url) {
   for (let i = 0; i < 3; i++) {
@@ -113,7 +107,7 @@ export async function checkFlights({ state, nowDay, todayIso, usualPrice }) {
   let read = 0, lowSkipped = 0;
   for (const origin of ORIGINS) {
     for (const dest of DEST_CODES) {
-      for (const month of monthsAhead(FLIGHT_RULES.months)) {
+      for (const month of MONTHS) {
         const q = new URLSearchParams({
           origin, destination: dest, departure_at: month, one_way: "false", currency: "brl", market: "br",
           sorting: "price", unique: "false", limit: "100", token: TOKEN,
@@ -225,6 +219,7 @@ export function flightAlertText(state, a, { brl, esc }) {
     `Ida ${dmy(a.dep)}${a.ret ? ` · volta ${dmy(a.ret)} (${n} ${n === 1 ? "noite" : "noites"})` : ""}`,
     ``,
     `💰 <b>${brl(a.price)}</b> ida e volta, por pessoa, classe econômica`,
+    `👫 Casal: ${brl(a.price * 2)}`,
   ];
   if (a.usual && a.usual > a.price) lines.push(`Preço de costume: ${brl(a.usual)} (−${Math.round((1 - a.price / a.usual) * 100)}%)`);
   if (a.prevPrice && a.prevPrice !== a.price) lines.push(`Leitura anterior: ${brl(a.prevPrice)}`);
@@ -251,7 +246,7 @@ export function flightBaselineText(state, { brl, esc }) {
   if (!rows.length) return "";
   return [
     `✈️ <b>Passagens ligadas</b>`,
-    `Ida e volta mais barata hoje, sem low cost, saindo de ${esc(ORIGINS.map(placeName).join(", "))}:`,
+    `Lua de mel, ida em agosto de 2027. Ida e volta mais barata hoje por pessoa, sem low cost, saindo de ${esc(ORIGINS.map(placeName).join(", "))}:`,
     ``,
     ...rows.map((r) => `• <b>${esc(DESTS[r.d]?.n || r.d)}</b>: ${brl(r.p)} · ${esc(airlineName(state, r.air))} · saindo de ${esc(placeName(r.oa || r.o))} · ida ${dmy(r.dep)}`),
     ``,
