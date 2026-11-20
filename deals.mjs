@@ -3,7 +3,8 @@
 // Pedido do usuário (20/11/2026): "acho que to por fora dos preços".
 //
 // Melhores Destinos: feed RSS (10 últimas). Passagens Imperdíveis: sitemap.xml (com data) + título da página.
-// Só promoções INTERNACIONAIS de passagem vão para o Telegram; destinos da lista dele vêm marcados.
+// Só promoções de passagem para FORA do Brasil e abaixo do teto de preço da região (REGIONS) vão para o Telegram.
+// Pedido (20/11): "n quero promo do brasil, quero só pra fora e só promo boa". Destinos da lista dele vêm marcados.
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
 
@@ -14,13 +15,24 @@ export const DEAL_RULES = {
   keepDays: 30,
 };
 
+// Palavra inteira (com acento): "porto" não pode pegar "Porto Seguro" nem "Aeroporto", "lima" não pega "Limeira".
+const words = (src) => new RegExp(`(?<!\\p{L})(?:${src})(?!\\p{L})`, "iu");
+
 // Destinos da lista do usuário (Europa, Orlando, Bahamas, Roma/Itália)
-const MINE = /europa|portugal|lisboa|porto\b|espanha|madri|barcelona|fran[cç]a|paris|it[aá]lia|roma|mil[aã]o|veneza|floren[cç]a|londres|inglaterra|reino unido|alemanha|frankfurt|munique|su[ií][cç]a|zurique|holanda|amsterd|[aá]ustria|viena|gr[eé]cia|atenas|praga|orlando|disney|bahamas|nassau/i;
-const INTL = new RegExp(MINE.source + "|internacion|exterior|estados unidos|\\beua\\b|miami|nova york|new york|fort lauderdale|las vegas|los angeles|canad[aá]|toronto|caribe|canc[uú]n|punta cana|aruba|cura[cç]ao|rep[uú]blica dominicana|panam[aá]|chile|santiago|argentina|buenos aires|bariloche|mendoza|uruguai|montevid|punta del este|peru|lima|cusco|col[oô]mbia|bogot[aá]|cartagena|san andr[eé]s|m[eé]xico|jap[aã]o|t[oó]quio|dubai|emirados|egito|[aá]frica|[aá]sia|tail[aâ]ndia|irlanda|dublin|esc[oó]cia|cro[aá]cia|turquia|istambul|marrocos|israel|maldivas|austr[aá]lia|nova zel[aâ]ndia|china|coreia|[ií]ndia", "i");
-const FLIGHT = /passage|voo|voos|a[eé]re|ida e volta|milhas/i;
-const NOT_FLIGHT = /ingresso|parque|hotel|hospedagem|chip|seguro viagem|cruzeiro|aluguel de carro|montanha-russa|sorteio|sortear/i;
-// bandeira de país (dois "regional indicators") que não seja a do Brasil
-const FOREIGN_FLAG = /(?!\u{1F1E7}\u{1F1F7})[\u{1F1E6}-\u{1F1FF}]{2}/u;
+const MINE_SRC = "europa|portugal|lisboa|porto(?! seguro| alegre| de galinhas| velho| belo)|espanha|madri|barcelona|fran[cç]a|paris|it[aá]lia|roma|mil[aã]o|veneza|floren[cç]a|londres|inglaterra|reino unido|alemanha|frankfurt|munique|su[ií][cç]a|zurique|holanda|amsterd[aã]|[aá]ustria|viena|gr[eé]cia|atenas|praga|orlando|disney|bahamas|nassau";
+const MINE = words(MINE_SRC);
+
+// Promo boa = "a partir de" do título abaixo do teto da região (ida e volta, por pessoa, com taxas).
+// Europa e EUA seguem as metas dele (R$ 4.000 e R$ 2.500); acima disso o blog chama de promoção, mas não é.
+// Título sem destino de fora reconhecido = fica de fora (era assim que promo do Brasil escapava).
+export const REGIONS = [
+  { name: "Europa", max: 4000, re: words(MINE_SRC + "|irlanda|dublin|esc[oó]cia|edimburgo|cro[aá]cia|b[eé]lgica|bruxelas|dinamarca|copenhague|noruega|su[eé]cia|finl[aâ]ndia|pol[oô]nia|hungria|budapeste|turquia|istambul") },
+  { name: "EUA, Canadá, México e Caribe", max: 2500, re: words("estados unidos|eua|miami|fort lauderdale|nova york|new york|boston|chicago|atlanta|dallas|houston|las vegas|los angeles|san francisco|washington|canad[aá]|toronto|montreal|vancouver|quebec|m[eé]xico|canc[uú]n|caribe|punta cana|rep[uú]blica dominicana|aruba|cura[cç]ao|jamaica|cuba|panam[aá]|costa rica") },
+  { name: "América do Sul", max: 1200, re: words("chile|santiago|argentina|buenos aires|bariloche|mendoza|ushuaia|uruguai|montevid[eé]u|punta del este|peru|lima|cusco|col[oô]mbia|bogot[aá]|cartagena|medell[ií]n|san andr[eé]s|santa marta|equador|quito|bol[ií]via|paraguai|assun[cç][aã]o|atacama|calama") },
+  { name: "Ásia, África e Oceania", max: 5000, re: words("jap[aã]o|t[oó]quio|tokyo|osaka|coreia|seul|china|xangai|pequim|tail[aâ]ndia|bangkok|dubai|emirados|catar|doha|egito|cairo|[aá]frica|marrocos|israel|maldivas|[ií]ndia|austr[aá]lia|sydney|nova zel[aâ]ndia|singapura|vietn[aã]|bali|indon[eé]sia") },
+];
+const FLIGHT = /passage|voo|voos|a[eé]re|ida e volta/i;
+const NOT_FLIGHT = /ingresso|parque|hotel|hospedagem|chip|seguro viagem|cruzeiro|aluguel de carro|montanha-russa|sorteio|sortear|milhas|pontos|taxa de/i;
 
 const decode = (s) =>
   String(s || "")
@@ -60,9 +72,21 @@ async function readPassagensImperdiveis() {
   return out.sort((a, b) => b.at - a.at).slice(0, 40);
 }
 
-const isIntlFlight = (d) => {
-  const t = `${d.title} ${d.desc || ""}`;
-  return FLIGHT.test(d.title) && !NOT_FLIGHT.test(d.title) && /R\$\s?[\d.]+/.test(t) && (FOREIGN_FLAG.test(d.title) || INTL.test(d.title));
+// Menor "R$ X" do título (é o "a partir de").
+const priceOf = (t) => {
+  const v = [...String(t).matchAll(/R\$\s?(\d{1,3}(?:\.\d{3})+|\d+)/g)].map((m) => +m[1].replace(/\./g, ""));
+  return v.length ? Math.min(...v) : 0;
+};
+
+// Só passagem para FORA do Brasil e com preço abaixo do teto da região; senão devolve null.
+export const judgeDeal = (d) => {
+  const t = d.title || "";
+  if (!FLIGHT.test(t) || NOT_FLIGHT.test(t)) return null;
+  const region = REGIONS.find((r) => r.re.test(t));
+  if (!region) return null;
+  const price = priceOf(t);
+  if (!price || price > region.max) return null;
+  return { region: region.name, max: region.max, price };
 };
 
 // Devolve as promoções novas que valem aviso. state.deals = { seen: { url: dia }, init: true }
@@ -103,7 +127,9 @@ export async function checkDeals({ state, nowDay }) {
     }
     seen[d.url] = nowDay;
     if (first && d.at < cutoff) continue;
-    if (!isIntlFlight(d)) continue;
+    const ok = judgeDeal(d);
+    if (!ok) continue;
+    Object.assign(d, ok);
     d.mine = MINE.test(d.title);
     out.push(d);
   }
@@ -121,6 +147,7 @@ export function dealCaption(d, { esc }) {
     ``,
     `<b>${esc(d.title)}</b>`,
   ];
+  if (d.price) lines.push(`A partir de R$ ${d.price.toLocaleString("pt-BR")} ida e volta (promo boa para ${esc(d.region)} = até R$ ${d.max.toLocaleString("pt-BR")})`);
   if (d.mine) lines.push(`⭐ Destino da sua lista`);
   if (desc) lines.push(``, esc(desc.length > 380 ? desc.slice(0, 377) + "…" : desc));
   lines.push(``, `<a href="${esc(d.url)}">Ver a promoção</a>`);
