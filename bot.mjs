@@ -72,6 +72,8 @@ const STORES = [
   { id: "coqueluche", name: "Coqueluche Casa", type: "vtexBrands", host: "https://www.coqueluchecasa.com.br", heavy: true, skipBrands: ["Peugeot"] },
   { id: "webcontinental", name: "WebContinental", type: "vtexBrands", host: "https://www.webcontinental.com.br", heavy: true, skipBrands: ["Peugeot"] },
   { id: "letseatit", name: "Lets Eat It", type: "shopify", host: "https://letseatit.com.br" },
+  // GenioDesk (mesa com regulagem de altura) — loja oficial Shopify, marca única (20/11/2026)
+  { id: "geniodesk", name: "GenioDesk", type: "shopify", host: "https://geniodesk.com.br", brand: "GenioDesk" },
   { id: "cookstore", name: "Cook Store", type: "woo", host: "https://cookstore.com.br", brands: ["Le Creuset"] },
 ];
 
@@ -441,7 +443,7 @@ async function readShopify(store) {
     const list = body.products || [];
     if (!list.length) break;
     for (const p of list) {
-      const brand = isOurBrand(p.vendor) || isOurBrand(p.title);
+      const brand = store.brand || isOurBrand(p.vendor) || isOurBrand(p.title);
       if (!brand || TOY_RX.test(p.title)) continue;
       for (const v of p.variants || []) {
         const price = num(v.price);
