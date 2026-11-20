@@ -1058,13 +1058,13 @@ async function main() {
     }
   }
   // primeira varredura de passagens: manda o preço de hoje de cada destino (uma vez só)
-  if (!state.flightsIntro && Object.keys(state.flights || {}).length) {
+  if (state.flightsIntro !== "v2" && Object.keys(state.flights || {}).length) { // v2: todos os meses até ago/27 + lua de mel
     const t = flightBaselineText(state, { brl, esc });
     if (t) {
-      try { await tg("sendMessage", { text: t }); state.flightsIntro = todayIso; saveState(state); } catch (e) { console.log(`Falha na mensagem inicial de passagens: ${e.message}`); }
+      try { await tg("sendMessage", { text: t }); state.flightsIntro = "v2"; saveState(state); } catch (e) { console.log(`Falha na mensagem inicial de passagens: ${e.message}`); }
     }
   }
-  flightAlerts.sort((x, y) => x.price / (x.usual || x.price) - y.price / (y.usual || y.price));
+  flightAlerts.sort((x, y) => (y.lm ? 1 : 0) - (x.lm ? 1 : 0) || x.price / (x.usual || x.price) - y.price / (y.usual || y.price));
   for (const a of flightAlerts) {
     try {
       await tg("sendMessage", { text: flightAlertText(state, a, { brl, esc }), link_preview_options: { is_disabled: true } });

@@ -14,8 +14,21 @@
 //   FLIGHT_DESTS=ORL,NAS,ROM,...    (códigos de cidade IATA)
 
 const TOKEN = process.env.TRAVELPAYOUTS_TOKEN || "";
-// Lua de mel em agosto de 2027 (pedido do usuário em 20/11/2026): só viagens com ida nesse mês
-const MONTHS = (process.env.FLIGHT_MONTHS || "2027-08").split(",").map((s) => s.trim()).filter(Boolean);
+// Lua de mel: Roma com ida em agosto de 2027 (destaque próprio, aviso mais sensível)
+export const HONEYMOON = { month: "2027-08", dest: "ROM", drop: 5 };
+const isHoneymoon = (r) => r.m === HONEYMOON.month && r.d === HONEYMOON.dest;
+// Meses buscados: de agora até agosto/2027 (pelo menos 6 meses). Usuário: "não é só pra lua de mel"
+function searchMonths() {
+  if (process.env.FLIGHT_MONTHS) return process.env.FLIGHT_MONTHS.split(",").map((s) => s.trim()).filter(Boolean);
+  const out = [];
+  const d = new Date();
+  for (let i = 0; i < 24; i++) {
+    const m = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + i, 1)).toISOString().slice(0, 7);
+    if (i >= 6 && m > HONEYMOON.month) break;
+    out.push(m);
+  }
+  return out;
+}
 const ORIGINS = (process.env.FLIGHT_ORIGINS || "LDB,MGF,CWB,SAO").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
 
 // Destinos pedidos pelo usuário (20/11/2026): Orlando, Roma, Bahamas e Europa
@@ -51,10 +64,12 @@ const AIRLINE_SITE = {
 
 // Meta de preço por região (por pessoa, ida e volta): avisa na hora, sem esperar histórico.
 // Europa a R$ 4.000: "to acostumado com passagem pra europa por 4000" (usuário, 20/11/2026)
-const TARGETS = { Europa: Number(process.env.FLIGHT_TARGET_EUROPA || 4000) };
+// Orlando a R$ 2.500 (usuário, 20/11/2026). Por código de destino ou por região.
+const TARGETS = { Europa: Number(process.env.FLIGHT_TARGET_EUROPA || 4000), ORL: Number(process.env.FLIGHT_TARGET_ORLANDO || 2500) };
+const targetFor = (d) => TARGETS[d] ?? TARGETS[DESTS[d]?.g];
 
 export const FLIGHT_RULES = {
-  everyMin: 60, // só agosto/2027: 72 consultas por varredura, cabe 1x por hora
+  everyMin: 120, // ~720 consultas por varredura (10 meses): a cada 2 h
   dropVsUsual: 12, // % abaixo do preço de costume da rota naquele mês
   newLowMargin: 5, // % abaixo do menor preço já visto
   minHistoryDays: 3, // dias acompanhando a rota antes de avisar queda
@@ -113,7 +128,7 @@ export async function checkFlights({ state, nowDay, todayIso, usualPrice }) {
   let read = 0, lowSkipped = 0;
   for (const origin of ORIGINS) {
     for (const dest of DEST_CODES) {
-      for (const month of MONTHS) {
+      for (const month of searchMonths()) {
         const q = new URLSearchParams({
           origin, destination: dest, departure_at: month, one_way: "false", currency: "brl", market: "br",
           sorting: "price", unique: "false", limit: "100", token: TOKEN,
@@ -152,7 +167,8 @@ export async function checkFlights({ state, nowDay, todayIso, usualPrice }) {
     }
     r.p = price;
 
-    const target = TARGETS[DESTS[r.d]?.g];
+    const target = targetFor(r.d);
+    const lm = isHoneymoon(r);
     const hitTarget = target && price <= target;
     if (!hitTarget && nowDay - r.h[0][0] < FLIGHT_RULES.minHistoryDays) continue;
     const before = r.h.slice(0, -1).map((x) => x[1]);
@@ -160,8 +176,8 @@ export async function checkFlights({ state, nowDay, todayIso, usualPrice }) {
     const prevMin = before.length ? Math.min(...before) : price;
     const usual = usualPrice(r.h, nowDay);
     const reasons = [];
-    if (hitTarget) reasons.push(`dentro da sua meta para a ${DESTS[r.d].g} (até R$ ${target.toLocaleString("pt-BR")} por pessoa)`);
-    if (usual && price <= usual * (1 - FLIGHT_RULES.dropVsUsual / 100))
+    if (hitTarget) reasons.push(`dentro da sua meta para ${TARGETS[r.d] ? DESTS[r.d].n : `a ${DESTS[r.d].g}`} (até R$ ${target.toLocaleString("pt-BR")} por pessoa)`);
+    if (usual && price <= usual * (1 - (lm ? HONEYMOON.drop : FLIGHT_RULES.dropVsUsual) / 100))
       reasons.push(`${Math.round((1 - price / usual) * 100)}% abaixo do preço de costume da rota`);
     if (before.length && price <= prevMin * (1 - FLIGHT_RULES.newLowMargin / 100)) reasons.push("menor preço já visto nessa rota e mês");
     if (!reasons.length) {
@@ -171,7 +187,7 @@ export async function checkFlights({ state, nowDay, todayIso, usualPrice }) {
     if (r.a && price > r.a * (1 - FLIGHT_RULES.realertStep / 100)) continue;
     r.a = price;
     r.at = todayIso;
-    alerts.push({ key, ...r, price, prevPrice, usual, prevMin, reasons });
+    alerts.push({ key, ...r, lm, price, prevPrice, usual, prevMin, reasons });
   }
 
   // limpa meses que já passaram e rotas sumidas
@@ -195,6 +211,7 @@ export const bookingUrl = () => "https://flights.booking.com/";
 export const matrixUrl = () => "https://matrix.itasoftware.com/";
 export const airlineUrl = (r) => AIRLINE_SITE[r.air] || "";
 
+const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 const stops = (n) => (n ? `${n} ${n === 1 ? "escala" : "escalas"}` : "direto");
 const dmy = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(2, 4)}` : "");
 const hm = (min) => (min ? `${Math.floor(min / 60)}h${String(min % 60).padStart(2, "0")}` : "");
@@ -210,6 +227,7 @@ export function exportFlights(state, nowDay) {
         o: r.oa || r.o, on: placeName(r.oa || r.o), d: r.da || r.d, dn: DESTS[r.d]?.n || r.d, dg: DESTS[r.d]?.g || "", m: r.m,
         p: r.p, dep: r.dep, ret: r.ret, al: airlineName(state, r.air), tr: r.tr, rtr: r.rtr, du: r.dur, db: r.durb,
         mn: Math.min(...prices), mx: Math.max(...prices), s: r.h[0][0], h: r.h.slice(-40),
+        ...(isHoneymoon(r) ? { lm: 1 } : {}),
         u: aviasalesUrl(r), g: googleFlightsUrl(r), k: skyscannerUrl(r), y: kayakUrl(r), c: airlineUrl(r),
         ...(r.at ? { w: r.at, z: r.a } : {}),
       };
@@ -223,7 +241,7 @@ export function flightAlertText(state, a, { brl, esc }) {
   const to = `${DESTS[a.d]?.n || a.d} (${a.da || a.d})`;
   const n = nights(a);
   const lines = [
-    `✈️ <b>Passagem mais barata: ${esc(DESTS[a.d]?.n || a.d)}</b>`,
+    a.lm ? `💍 <b>Lua de mel: Roma em agosto</b>` : `✈️ <b>Passagem mais barata: ${esc(DESTS[a.d]?.n || a.d)}</b>`,
     `<b>${esc(from)} para ${esc(to)}</b>`,
     `Ida ${dmy(a.dep)}${a.ret ? ` · volta ${dmy(a.ret)} (${n} ${n === 1 ? "noite" : "noites"})` : ""}`,
     ``,
@@ -253,12 +271,14 @@ export function flightBaselineText(state, { brl, esc }) {
   for (const r of Object.values(state.flights || {})) if (!best.has(r.d) || best.get(r.d).p > r.p) best.set(r.d, r);
   const rows = [...best.values()].sort((a, b) => a.p - b.p);
   if (!rows.length) return "";
+  const lmRow = Object.values(state.flights).filter(isHoneymoon).sort((a, b) => a.p - b.p)[0];
   return [
     `✈️ <b>Passagens ligadas</b>`,
-    `Lua de mel, ida em agosto de 2027. Ida e volta mais barata hoje por pessoa, sem low cost, saindo de ${esc(ORIGINS.map(placeName).join(", "))}:`,
+    `Ida e volta mais barata hoje por pessoa (até agosto de 2027), sem low cost, saindo de ${esc(ORIGINS.map(placeName).join(", "))}:`,
+    ...(lmRow ? [``, `💍 <b>Lua de mel (Roma, agosto/27)</b>: ${brl(lmRow.p)} · ${esc(airlineName(state, lmRow.air))} · saindo de ${esc(placeName(lmRow.oa || lmRow.o))} · ida ${dmy(lmRow.dep)}${lmRow.ret ? ` volta ${dmy(lmRow.ret)}` : ""}`] : [``, `💍 Lua de mel (Roma, agosto/27): ainda sem preço na fonte.`]),
     ``,
-    ...rows.map((r) => `• <b>${esc(DESTS[r.d]?.n || r.d)}</b>: ${brl(r.p)} · ${esc(airlineName(state, r.air))} · saindo de ${esc(placeName(r.oa || r.o))} · ida ${dmy(r.dep)}`),
+    ...rows.map((r) => `• <b>${esc(DESTS[r.d]?.n || r.d)}</b> (${MES[+r.m.slice(5, 7) - 1]}/${r.m.slice(2, 4)}): ${brl(r.p)} · ${esc(airlineName(state, r.air))} · saindo de ${esc(placeName(r.oa || r.o))} · ida ${dmy(r.dep)}`),
     ``,
-    `Daqui pra frente aviso quando uma rota cair ${FLIGHT_RULES.dropVsUsual}% abaixo do preço de costume, bater o menor preço já visto ou a Europa sair por até R$ ${TARGETS.Europa.toLocaleString("pt-BR")}. Bagagem não vem da fonte: confira na tarifa.`,
+    `Daqui pra frente aviso quando uma rota cair ${FLIGHT_RULES.dropVsUsual}% abaixo do preço de costume, bater o menor preço já visto, a Europa sair por até R$ ${TARGETS.Europa.toLocaleString("pt-BR")} ou Orlando por até R$ ${TARGETS.ORL.toLocaleString("pt-BR")}. Roma em agosto avisa a partir de ${HONEYMOON.drop}% de queda. Bagagem não vem da fonte: confira na tarifa.`,
   ].join("\n");
 }

@@ -622,6 +622,7 @@ const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out
 function voo(v) {
   const usualDrop = v.mx > v.p ? pct(v.mx, v.p) : 0;
   const tags = [];
+  if (v.lm) tags.push(`<span class="tag thyme">💍 Lua de mel</span>`);
   if (v.mx > v.mn && v.p <= v.mn) tags.push(`<span class="tag good">Menor preço já visto</span>`);
   if (!v.tr && (!v.ret || !v.rtr)) tags.push(`<span class="tag">Voo direto</span>`);
   const F = [];
@@ -649,12 +650,12 @@ function drawVoos() {
   const list = VOOS.filter((v) => (!vOrig || v.o === vOrig) && words.every((w) => norm(`${v.dn} ${v.d} ${v.dg} ${v.on} ${v.o} ${v.al}`).includes(w)));
   // por destino, só a viagem mais barata (os outros meses ficam no filtro de busca)
   const best = new Map();
-  for (const v of list) { const k = vOrig ? `${v.o}|${v.d}` : v.d; if (!best.has(k) || best.get(k).p > v.p) best.set(k, v); }
-  const show = words.length ? list : [...best.values()];
-  show.sort((a, b) => a.p - b.p);
+  for (const v of list.filter((x) => !x.lm || words.length)) { const k = vOrig ? `${v.o}|${v.d}` : v.d; if (!best.has(k) || best.get(k).p > v.p) best.set(k, v); }
+  const show = words.length ? list : [...best.values(), ...list.filter((v) => v.lm && !best.get(vOrig ? `${v.o}|${v.d}` : v.d)?.lm).sort((a, b) => a.p - b.p).slice(0, 1)];
+  show.sort((a, b) => (b.lm || 0) - (a.lm || 0) || a.p - b.p);
   const sel = origins.length > 1 ? `<div class="tools"><select id="vorig" aria-label="Saindo de"><option value="">Saindo de todos</option>${origins.map(([c, n]) => `<option value="${esc(c)}"${c === vOrig ? " selected" : ""}>Saindo de ${esc(n)}</option>`).join("")}</select></div>` : "";
   const head = `<div class="head"><div><h2>${show.length ? `${show.length} ${show.length === 1 ? "destino" : "destinos"}` : "Passagens"}</h2>
-    <p>Orlando, Bahamas, Roma e Europa: ida em agosto de 2027 (lua de mel), ida e volta mais barata por pessoa, só companhias tradicionais (sem low cost). Buscando uma cidade, aparecem todas as saídas. Queda de preço vai para o Telegram.</p></div>${sel}</div>`;
+    <p>Orlando, Bahamas, Roma e Europa até agosto de 2027: ida e volta mais barata por pessoa, só companhias tradicionais (sem low cost). Buscando uma cidade, aparecem todas as saídas. Queda de preço vai para o Telegram.</p></div>${sel}</div>`;
   const empty = !VOOSON
     ? `<b>Passagens ainda não ligadas</b>Falta a chave grátis da Travelpayouts no GitHub. Assim que ela entrar, as rotas aparecem aqui em até 1 hora.`
     : `<b>Nenhuma rota encontrada</b>${words.length ? "Tente outra cidade." : "A primeira leitura sai em até 1 hora."}`;
