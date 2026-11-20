@@ -49,6 +49,10 @@ const AIRLINE_SITE = {
   QR: "https://www.qatarairways.com/pt-br/homepage.html", AR: "https://www.aerolineas.com.ar/pt-br", ET: "https://www.ethiopianairlines.com/br",
 };
 
+// Meta de preço por região (por pessoa, ida e volta): avisa na hora, sem esperar histórico.
+// Europa a R$ 4.000: "to acostumado com passagem pra europa por 4000" (usuário, 20/11/2026)
+const TARGETS = { Europa: Number(process.env.FLIGHT_TARGET_EUROPA || 4000) };
+
 export const FLIGHT_RULES = {
   everyMin: 60, // só agosto/2027: 72 consultas por varredura, cabe 1x por hora
   dropVsUsual: 12, // % abaixo do preço de costume da rota naquele mês
@@ -148,15 +152,18 @@ export async function checkFlights({ state, nowDay, todayIso, usualPrice }) {
     }
     r.p = price;
 
-    if (nowDay - r.h[0][0] < FLIGHT_RULES.minHistoryDays) continue;
+    const target = TARGETS[DESTS[r.d]?.g];
+    const hitTarget = target && price <= target;
+    if (!hitTarget && nowDay - r.h[0][0] < FLIGHT_RULES.minHistoryDays) continue;
     const before = r.h.slice(0, -1).map((x) => x[1]);
-    if (!before.length) continue;
-    const prevMin = Math.min(...before);
+    if (!before.length && !hitTarget) continue;
+    const prevMin = before.length ? Math.min(...before) : price;
     const usual = usualPrice(r.h, nowDay);
     const reasons = [];
+    if (hitTarget) reasons.push(`dentro da sua meta para a ${DESTS[r.d].g} (até R$ ${target.toLocaleString("pt-BR")} por pessoa)`);
     if (usual && price <= usual * (1 - FLIGHT_RULES.dropVsUsual / 100))
       reasons.push(`${Math.round((1 - price / usual) * 100)}% abaixo do preço de costume da rota`);
-    if (price <= prevMin * (1 - FLIGHT_RULES.newLowMargin / 100)) reasons.push("menor preço já visto nessa rota e mês");
+    if (before.length && price <= prevMin * (1 - FLIGHT_RULES.newLowMargin / 100)) reasons.push("menor preço já visto nessa rota e mês");
     if (!reasons.length) {
       if (r.a && usual && price >= usual) r.a = null; // voltou ao normal: libera aviso futuro
       continue;
@@ -225,7 +232,7 @@ export function flightAlertText(state, a, { brl, esc }) {
   ];
   if (a.usual && a.usual > a.price) lines.push(`Preço de costume: ${brl(a.usual)} (−${Math.round((1 - a.price / a.usual) * 100)}%)`);
   if (a.prevPrice && a.prevPrice !== a.price) lines.push(`Leitura anterior: ${brl(a.prevPrice)}`);
-  lines.push(`Menor antes deste: ${brl(a.prevMin)}`);
+  if (a.prevMin !== a.price) lines.push(`Menor antes deste: ${brl(a.prevMin)}`);
   lines.push(``, `🛫 <b>${esc(airlineName(state, a.air))}</b>${a.fn ? ` (voo ${esc(a.air)} ${esc(a.fn)})` : ""}`);
   lines.push(`Ida: ${stops(a.tr)}${a.dur ? `, ${hm(a.dur)}` : ""}`);
   if (a.ret) lines.push(`Volta: ${stops(a.rtr)}${a.durb ? `, ${hm(a.durb)}` : ""}`);
@@ -252,6 +259,6 @@ export function flightBaselineText(state, { brl, esc }) {
     ``,
     ...rows.map((r) => `• <b>${esc(DESTS[r.d]?.n || r.d)}</b>: ${brl(r.p)} · ${esc(airlineName(state, r.air))} · saindo de ${esc(placeName(r.oa || r.o))} · ida ${dmy(r.dep)}`),
     ``,
-    `Daqui pra frente aviso quando uma rota cair ${FLIGHT_RULES.dropVsUsual}% abaixo do preço de costume ou bater o menor preço já visto. Bagagem não vem da fonte: confira na tarifa.`,
+    `Daqui pra frente aviso quando uma rota cair ${FLIGHT_RULES.dropVsUsual}% abaixo do preço de costume, bater o menor preço já visto ou a Europa sair por até R$ ${TARGETS.Europa.toLocaleString("pt-BR")}. Bagagem não vem da fonte: confira na tarifa.`,
   ].join("\n");
 }
