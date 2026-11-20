@@ -69,6 +69,7 @@ header{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--surfa
 .chip[aria-pressed=true]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
 .chip small{color:var(--mute);margin-left:5px;font-weight:400}
 .chip[aria-pressed=true] small{color:inherit;opacity:.7}
+body.voos #brands{display:none}
 @media (max-width:640px){.nav{flex-direction:column;align-items:stretch;gap:10px}.seg button{flex:1;padding:7px 6px;font-size:13.5px}.seg small{display:block;margin:0}.status{display:none}}
 .paylbl{color:var(--mute);font-size:13px;margin-top:3px}
 .pix span{font-weight:500;opacity:.85}
@@ -181,6 +182,10 @@ code{font-family:inherit;font-weight:700;background:var(--thyme-soft);color:var(
   .item .pic{aspect-ratio:auto;border-bottom:0;border-right:1px solid var(--line);padding:8px;height:100%;min-height:120px}
   .promos{grid-template-columns:1fr}
 }
+.route{font-size:19px;font-weight:800;letter-spacing:-.02em;line-height:1.2;margin:0}
+.route span{color:var(--mute);font-weight:600}
+.dates{font-size:14px;color:var(--ink2)}
+.flt .now{font-size:26px}
 .empty{grid-column:1/-1;text-align:center;color:var(--mute);padding:56px 16px;background:var(--surface);border:1px dashed var(--line);border-radius:var(--radius-lg)}
 .empty b{display:block;color:var(--ink);font-size:17px;margin-bottom:4px}
 .loadmore{display:block;margin:18px auto 0;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:11px 22px;font-weight:600;cursor:pointer}
@@ -213,6 +218,7 @@ code{font-family:inherit;font-weight:700;background:var(--thyme-soft);color:var(
         <button role="tab" data-tab="promo" aria-selected="true">Promoções<small id="npromo"></small></button>
         <button role="tab" data-tab="ativas" aria-selected="false">Ainda valendo<small id="nativas"></small></button>
         <button role="tab" data-tab="todos" aria-selected="false">Produtos<small id="nall"></small></button>
+        <button role="tab" data-tab="voos" aria-selected="false">Passagens<small id="nvoos"></small></button>
       </div>
       <div class="chips" id="brands"></div>
     </div>
@@ -223,6 +229,8 @@ code{font-family:inherit;font-weight:700;background:var(--thyme-soft);color:var(
   <div class="head"><div><h2>Promoções</h2><p>Carregando…</p></div></div>
   <div class="promos"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div>
 </section>
+
+<section id="vvoos" class="wrap view-voos" hidden></section>
 
 <section class="wrap view-todos" hidden>
   <div class="head">
@@ -326,6 +334,9 @@ async function load() {
   BYURL = new Map(ALL.map((r) => [r.u, r]));
   const seenU = new Set();
   ACTIVE = PROMOS.filter((x) => !seenU.has(x.u) && seenU.add(x.u) && stillOn(x));
+  VOOS = got.flatMap((g) => g.voos || []).map((v) => ({ ...v, u: safeUrl(v.u), g: safeUrl(v.g) }));
+  VOOSON = got.some((g) => g.voosOn);
+  $("nvoos").textContent = VOOS.length || "";
   $("npromo").textContent = PROMOS.length ? PROMOS.length : "";
   $("nativas").textContent = ACTIVE.length;
   $("nall").textContent = ALL.length.toLocaleString("pt-BR");
@@ -602,17 +613,68 @@ function drawPromo() {
     : `<div class="promos"><div class="empty">${empty}</div></div>`);
 }
 
+// ---------- Passagens aéreas ----------
+let VOOS = [], VOOSON = false, vOrig = "";
+const dmy = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : "");
+const stops = (n) => (n ? `${n} ${n === 1 ? "escala" : "escalas"}` : "direto");
+const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+function voo(v) {
+  const usualDrop = v.mx > v.p ? pct(v.mx, v.p) : 0;
+  const tags = [];
+  if (v.mx > v.mn && v.p <= v.mn) tags.push(`<span class="tag good">Menor preço já visto</span>`);
+  if (!v.tr && (!v.ret || !v.rtr)) tags.push(`<span class="tag">Voo direto</span>`);
+  const F = [];
+  const row = (k, x) => F.push(`<dt>${k}</dt><dd>${x}</dd>`);
+  row("Companhia", esc(v.al));
+  row("Ida", `${dmy(v.dep)}, ${stops(v.tr)}`);
+  if (v.ret) row("Volta", `${dmy(v.ret)}, ${stops(v.rtr)}`);
+  row(`Desde ${day(v.s)}`, v.mx > v.mn ? `${brl(v.mn)} a ${brl(v.mx)}` : brl(v.p));
+  if (v.w) row("Último aviso", `${new Date(v.w + "T12:00:00Z").toLocaleDateString("pt-BR")}${v.z ? ` a ${brl(v.z)}` : ""}`);
+  return `<article class="deal flt"><div class="body">
+    <div class="who"><b>${esc(v.on)}</b><span>${MES[+v.m.slice(5, 7) - 1]} de ${v.m.slice(0, 4)}</span></div>
+    <p class="route">${esc(v.dn)} <span>${esc(v.d)}</span></p>
+    <div class="dates">Ida ${dmy(v.dep)}${v.ret ? ` · volta ${dmy(v.ret)}` : ""}</div>
+    <div class="pay"><div class="now">${brl(v.p)}</div><div class="paylbl">ida e volta, por pessoa</div>${usualDrop ? `<div class="was">já esteve ${brl(v.mx)}</div>` : ""}</div>
+    ${tags.length ? `<div class="tags">${tags.join("")}</div>` : ""}
+    <details class="more"><summary>Detalhes e histórico ${CHEV}</summary><dl class="facts">${F.join("")}</dl>${chart(v.h, v.p)}<div class="note">Preço encontrado em buscas das últimas 48 h. Confira antes de comprar.</div></details>
+    <div class="acts">${v.u ? `<a class="btn pri" href="${esc(v.u)}" target="_blank" rel="noopener">Aviasales ${EXT}</a>` : ""}<a class="btn" href="${esc(v.g)}" target="_blank" rel="noopener">Google Voos ${EXT}</a></div>
+  </div></article>`;
+}
+function drawVoos() {
+  const words = norm($("q").value).split(/s+/).filter(Boolean);
+  $("clear").hidden = !words.length;
+  const origins = [...new Map(VOOS.map((v) => [v.o, v.on])).entries()];
+  const list = VOOS.filter((v) => (!vOrig || v.o === vOrig) && words.every((w) => norm(`${v.dn} ${v.d} ${v.on} ${v.al}`).includes(w)));
+  // por destino, só a viagem mais barata (os outros meses ficam no filtro de busca)
+  const best = new Map();
+  for (const v of list) { const k = `${v.o}|${v.d}`; if (!best.has(k) || best.get(k).p > v.p) best.set(k, v); }
+  const show = words.length ? list : [...best.values()];
+  show.sort((a, b) => a.p - b.p);
+  const sel = origins.length > 1 ? `<div class="tools"><select id="vorig" aria-label="Saindo de"><option value="">Saindo de todos</option>${origins.map(([c, n]) => `<option value="${esc(c)}"${c === vOrig ? " selected" : ""}>Saindo de ${esc(n)}</option>`).join("")}</select></div>` : "";
+  const head = `<div class="head"><div><h2>${show.length ? `${show.length} ${show.length === 1 ? "destino" : "destinos"}` : "Passagens"}</h2>
+    <p>Ida e volta mais barata para cada destino nos próximos 6 meses. Buscando uma cidade, aparecem todos os meses. Quando o preço de uma rota cair, o robô avisa no Telegram.</p></div>${sel}</div>`;
+  const empty = !VOOSON
+    ? `<b>Passagens ainda não ligadas</b>Falta a chave grátis da Travelpayouts no GitHub. Assim que ela entrar, as rotas aparecem aqui em até 1 hora.`
+    : `<b>Nenhuma rota encontrada</b>${words.length ? "Tente outra cidade." : "A primeira leitura sai em até 1 hora."}`;
+  $("vvoos").innerHTML = head + `<div class="promos">${show.length ? show.map(voo).join("") : `<div class="empty">${empty}</div>`}</div>`;
+}
+$("vvoos").addEventListener("change", (e) => { if (e.target.id === "vorig") { vOrig = e.target.value; drawVoos(); } });
+
 function setTab(tt) {
   tab = tt;
+  document.body.classList.toggle("voos", tt === "voos");
+  $("vvoos").hidden = tt !== "voos";
+  $("q").placeholder = tt === "voos" ? "Buscar cidade de destino" : "Buscar produto, marca ou loja";
   for (const b of document.querySelectorAll(".seg button")) b.setAttribute("aria-selected", String(b.dataset.tab === tt));
-  $("vpromo").hidden = tt === "todos";
+  $("vpromo").hidden = tt === "todos" || tt === "voos";
   for (const el of document.querySelectorAll(".view-todos")) el.hidden = tt !== "todos";
   drawTab();
   try { localStorage.setItem("cp-tab", tt); } catch {}
 }
 function drawTab() {
   if (!ALL.length) return;
-  if (tab !== "todos") drawPromo();
+  if (tab === "voos") drawVoos();
+  else if (tab !== "todos") drawPromo();
   else render();
 }
 document.querySelector(".seg").addEventListener("click", (e) => {
@@ -621,7 +683,7 @@ document.querySelector(".seg").addEventListener("click", (e) => {
 // filtros abertos em tela larga, fechados no celular
 if (matchMedia("(min-width:980px)").matches) $("filters").open = true;
 
-try { const saved = localStorage.getItem("cp-tab"); if (["promo", "ativas", "todos"].includes(saved)) setTab(saved); } catch {}
+try { const saved = localStorage.getItem("cp-tab"); if (["promo", "ativas", "todos", "voos"].includes(saved)) setTab(saved); } catch {}
 load();
 </script>
 </body>

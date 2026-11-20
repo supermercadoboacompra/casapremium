@@ -7,9 +7,11 @@
 //   DRY_RUN=true     — consulta as lojas mas não envia nada (mostra no log)
 //   ONLY=smeg,karsten — consulta só essas lojas (para testes)
 //   CATALOG_FILE=catalogo.json — grava a lista de produtos para o site (docs/index.html)
+//   TRAVELPAYOUTS_TOKEN — liga a aba de passagens aéreas (ver flights.mjs); ONLY=voos testa só ela
 
 import fs from "node:fs";
 import zlib from "node:zlib";
+import { checkFlights, exportFlights, flightAlertText, flightsEnabled, FLIGHT_RULES } from "./flights.mjs";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
@@ -689,8 +691,9 @@ function exportCatalog(state, nowDay, file) {
     x: state.coupons[s.id].pix || "",
   }));
   const promos = (state.promos || []).filter((x) => STORES.some((s) => s.id === x.s) || !x.s);
-  fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), items, cupons, promos }));
-  console.log(`Catálogo do site: ${items.length} produtos, ${promos.length} promoções em ${file}`);
+  const voos = exportFlights(state, nowDay);
+  fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), items, cupons, promos, voos, voosOn: flightsEnabled() }));
+  console.log(`Catálogo do site: ${items.length} produtos, ${promos.length} promoções, ${voos.length} rotas de avião em ${file}`);
 }
 
 // Preço "de costume": o preço que ficou mais dias no ar nos últimos 30 dias.
@@ -989,6 +992,24 @@ async function main() {
     }
   }
 
+  // Passagens aéreas (1x por hora; só com a chave da Travelpayouts)
+  let flightAlerts = [];
+  if (flightsEnabled() && (ONLY.length ? ONLY.includes("voos") : due("voos", FLIGHT_RULES.everyMin))) {
+    try {
+      const t0 = Date.now();
+      const r = await checkFlights({ state, nowDay, todayIso, usualPrice });
+      flightAlerts = r.alerts;
+      state.lastRead.voos = Date.now();
+      state.storeFails.voos = 0;
+      console.log(`OK Passagens: ${r.read} rotas em ${((Date.now() - t0) / 1000).toFixed(0)}s, ${flightAlerts.length} avisos`);
+    } catch (e) {
+      const n = (state.storeFails.voos || 0) + 1;
+      state.storeFails.voos = n;
+      console.log(`ERRO Passagens (${n}ª seguida): ${e.message}`);
+      if (n === 3) broken.push("Passagens aéreas (Travelpayouts)");
+    }
+  }
+
   for (const a of alerts) a.coupons = state.coupons[a.store];
   logPromos(state, alerts);
   state.runs = (state.runs || 0) + 1;
@@ -1034,6 +1055,14 @@ async function main() {
       await sendAlert(a);
     } catch (e) {
       console.log(`Falha ao avisar ${a.key}: ${e.message}`);
+    }
+  }
+  flightAlerts.sort((x, y) => x.price / (x.usual || x.price) - y.price / (y.usual || y.price));
+  for (const a of flightAlerts) {
+    try {
+      await tg("sendMessage", { text: flightAlertText(state, a, { brl, esc }), link_preview_options: { is_disabled: true } });
+    } catch (e) {
+      console.log(`Falha ao avisar passagem ${a.key}: ${e.message}`);
     }
   }
   if (broken.length)
