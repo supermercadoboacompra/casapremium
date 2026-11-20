@@ -1,6 +1,6 @@
 // Passagens aéreas: ida e volta mais barata para Orlando, Bahamas, Roma e Europa,
 // saindo de Londrina, Maringá, Curitiba e São Paulo (Guarulhos/Congonhas/Viracopos).
-// Sem companhia low cost (GOL, Azul, Ryanair, easyJet...).
+// Sem companhia low cost (Arajet, Ryanair, easyJet...). Azul e GOL entram.
 //
 // Fonte: API de dados da Travelpayouts (Aviasales), gratuita, em reais. Os preços são os
 // que outras pessoas encontraram nas buscas das últimas 48 h, então o alerta sempre
@@ -34,7 +34,9 @@ export const DESTS = {
 const DEST_CODES = (process.env.FLIGHT_DESTS || Object.keys(DESTS).join(",")).split(",").map((s) => s.trim().toUpperCase()).filter(Boolean);
 
 // Low cost: a própria fonte marca (is_lowcost). Estes entram na marra, caso a lista falhe.
-const LOWCOST_EXTRA = ["G3", "AD", "FR", "U2", "W6", "VY", "NK", "F9", "B6", "H2", "JA", "HV", "TO", "EW", "V7", "DY", "D8", "N0", "FO", "WN", "G4", "XP", "LS"];
+// Arajet (DM) é low cost; Azul e GOL NÃO contam como low cost (pedido do usuário em 20/11/2026).
+const NOT_LOWCOST = ["G3", "AD"];
+const LOWCOST_EXTRA = ["DM", "FR", "U2", "W6", "VY", "NK", "F9", "B6", "H2", "JA", "HV", "TO", "EW", "V7", "DY", "D8", "N0", "FO", "WN", "G4", "XP", "LS"];
 
 // Site de cada companhia (para conferir e comprar direto)
 const AIRLINE_SITE = {
@@ -88,7 +90,7 @@ async function loadAirlines(state) {
     console.log(`  passagens: lista de companhias não carregou (${e.message})`);
   }
 }
-const isLowCost = (state, code) => !code || LOWCOST_EXTRA.includes(code) || (state.fair?.low || []).includes(code);
+const isLowCost = (state, code) => !code || (!NOT_LOWCOST.includes(code) && (LOWCOST_EXTRA.includes(code) || (state.fair?.low || []).includes(code)));
 export const airlineName = (state, code) => state.fair?.names?.[code] || code;
 
 // Nomes das cidades de saída e aeroportos (Londrina, Guarulhos...)
