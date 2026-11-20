@@ -11,7 +11,7 @@
 
 import fs from "node:fs";
 import zlib from "node:zlib";
-import { checkFlights, exportFlights, flightAlertText, flightsEnabled, FLIGHT_RULES } from "./flights.mjs";
+import { checkFlights, exportFlights, flightAlertText, flightBaselineText, flightsEnabled, FLIGHT_RULES } from "./flights.mjs";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID || "";
@@ -1055,6 +1055,13 @@ async function main() {
       await sendAlert(a);
     } catch (e) {
       console.log(`Falha ao avisar ${a.key}: ${e.message}`);
+    }
+  }
+  // primeira varredura de passagens: manda o preço de hoje de cada destino (uma vez só)
+  if (!state.flightsIntro && Object.keys(state.flights || {}).length) {
+    const t = flightBaselineText(state, { brl, esc });
+    if (t) {
+      try { await tg("sendMessage", { text: t }); state.flightsIntro = todayIso; saveState(state); } catch (e) { console.log(`Falha na mensagem inicial de passagens: ${e.message}`); }
     }
   }
   flightAlerts.sort((x, y) => x.price / (x.usual || x.price) - y.price / (y.usual || y.price));

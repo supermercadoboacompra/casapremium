@@ -616,6 +616,7 @@ function drawPromo() {
 // ---------- Passagens aéreas ----------
 let VOOS = [], VOOSON = false, vOrig = "";
 const dmy = (iso) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}` : "");
+const hm = (m) => (m ? `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}` : "");
 const stops = (n) => (n ? `${n} ${n === 1 ? "escala" : "escalas"}` : "direto");
 const MES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 function voo(v) {
@@ -626,17 +627,18 @@ function voo(v) {
   const F = [];
   const row = (k, x) => F.push(`<dt>${k}</dt><dd>${x}</dd>`);
   row("Companhia", esc(v.al));
-  row("Ida", `${dmy(v.dep)}, ${stops(v.tr)}`);
-  if (v.ret) row("Volta", `${dmy(v.ret)}, ${stops(v.rtr)}`);
+  row("Ida", `${dmy(v.dep)}, ${stops(v.tr)}${v.du ? `, ${hm(v.du)}` : ""}`);
+  if (v.ret) row("Volta", `${dmy(v.ret)}, ${stops(v.rtr)}${v.db ? `, ${hm(v.db)}` : ""}`);
+  row("Bagagem", "não informada pela fonte; confira na tarifa");
   row(`Desde ${day(v.s)}`, v.mx > v.mn ? `${brl(v.mn)} a ${brl(v.mx)}` : brl(v.p));
   if (v.w) row("Último aviso", `${new Date(v.w + "T12:00:00Z").toLocaleDateString("pt-BR")}${v.z ? ` a ${brl(v.z)}` : ""}`);
   return `<article class="deal flt"><div class="body">
-    <div class="who"><b>${esc(v.on)}</b><span>${MES[+v.m.slice(5, 7) - 1]} de ${v.m.slice(0, 4)}</span></div>
+    <div class="who"><b>${esc(v.al)}</b><span>saindo de ${esc(v.on)} · ${MES[+v.m.slice(5, 7) - 1]} de ${v.m.slice(0, 4)}</span></div>
     <p class="route">${esc(v.dn)} <span>${esc(v.d)}</span></p>
     <div class="dates">Ida ${dmy(v.dep)}${v.ret ? ` · volta ${dmy(v.ret)}` : ""}</div>
-    <div class="pay"><div class="now">${brl(v.p)}</div><div class="paylbl">ida e volta, por pessoa</div>${usualDrop ? `<div class="was">já esteve ${brl(v.mx)}</div>` : ""}</div>
+    <div class="pay"><div class="now">${brl(v.p)}</div><div class="paylbl">ida e volta, por pessoa, econômica</div>${usualDrop ? `<div class="was">já esteve ${brl(v.mx)}</div>` : ""}</div>
     ${tags.length ? `<div class="tags">${tags.join("")}</div>` : ""}
-    <details class="more"><summary>Detalhes e histórico ${CHEV}</summary><dl class="facts">${F.join("")}</dl>${chart(v.h, v.p)}<div class="note">Preço encontrado em buscas das últimas 48 h. Confira antes de comprar.</div></details>
+    <details class="more"><summary>Detalhes e histórico ${CHEV}</summary><dl class="facts">${F.join("")}</dl>${chart(v.h, v.p)}<div class="note">Preço encontrado em buscas das últimas 48 h. Confira antes de comprar: ${[[v.k, "Skyscanner"], [v.y, "Kayak"], [v.c, "site da companhia"], ["https://flights.booking.com/", "Booking"], ["https://matrix.itasoftware.com/", "Matrix ITA"]].filter((x) => safeUrl(x[0])).map(([u, t]) => `<a href="${esc(safeUrl(u))}" target="_blank" rel="noopener">${t}</a>`).join(" · ")}</div></details>
     <div class="acts">${v.u ? `<a class="btn pri" href="${esc(v.u)}" target="_blank" rel="noopener">Aviasales ${EXT}</a>` : ""}<a class="btn" href="${esc(v.g)}" target="_blank" rel="noopener">Google Voos ${EXT}</a></div>
   </div></article>`;
 }
@@ -644,15 +646,15 @@ function drawVoos() {
   const words = norm($("q").value).split(/s+/).filter(Boolean);
   $("clear").hidden = !words.length;
   const origins = [...new Map(VOOS.map((v) => [v.o, v.on])).entries()];
-  const list = VOOS.filter((v) => (!vOrig || v.o === vOrig) && words.every((w) => norm(`${v.dn} ${v.d} ${v.on} ${v.al}`).includes(w)));
+  const list = VOOS.filter((v) => (!vOrig || v.o === vOrig) && words.every((w) => norm(`${v.dn} ${v.d} ${v.dg} ${v.on} ${v.o} ${v.al}`).includes(w)));
   // por destino, só a viagem mais barata (os outros meses ficam no filtro de busca)
   const best = new Map();
-  for (const v of list) { const k = `${v.o}|${v.d}`; if (!best.has(k) || best.get(k).p > v.p) best.set(k, v); }
+  for (const v of list) { const k = vOrig ? `${v.o}|${v.d}` : v.d; if (!best.has(k) || best.get(k).p > v.p) best.set(k, v); }
   const show = words.length ? list : [...best.values()];
   show.sort((a, b) => a.p - b.p);
   const sel = origins.length > 1 ? `<div class="tools"><select id="vorig" aria-label="Saindo de"><option value="">Saindo de todos</option>${origins.map(([c, n]) => `<option value="${esc(c)}"${c === vOrig ? " selected" : ""}>Saindo de ${esc(n)}</option>`).join("")}</select></div>` : "";
   const head = `<div class="head"><div><h2>${show.length ? `${show.length} ${show.length === 1 ? "destino" : "destinos"}` : "Passagens"}</h2>
-    <p>Ida e volta mais barata para cada destino nos próximos 6 meses. Buscando uma cidade, aparecem todos os meses. Quando o preço de uma rota cair, o robô avisa no Telegram.</p></div>${sel}</div>`;
+    <p>Orlando, Bahamas, Roma e Europa: ida e volta mais barata nos próximos 6 meses, só companhias tradicionais (sem low cost). Buscando uma cidade, aparecem todos os meses e saídas. Queda de preço vai para o Telegram.</p></div>${sel}</div>`;
   const empty = !VOOSON
     ? `<b>Passagens ainda não ligadas</b>Falta a chave grátis da Travelpayouts no GitHub. Assim que ela entrar, as rotas aparecem aqui em até 1 hora.`
     : `<b>Nenhuma rota encontrada</b>${words.length ? "Tente outra cidade." : "A primeira leitura sai em até 1 hora."}`;
