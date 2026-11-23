@@ -110,6 +110,23 @@ body.voos #brands{display:none}
 .tag.good{background:var(--thyme-soft);color:var(--thyme)}
 .tag.warn{background:var(--bug-soft);color:var(--bug)}
 .tag.thyme{background:#56623f;color:#fff}
+/* análise: vale ou não vale */
+.verdict{border-radius:var(--radius-sm);padding:9px 11px;font-size:14px;line-height:1.4;background:var(--sunk);color:var(--ink2)}
+.verdict b{display:block;font-size:13px;letter-spacing:.02em;text-transform:uppercase;margin-bottom:2px}
+.verdict ul{margin:2px 0 0;padding-left:18px}
+.verdict.v1{background:var(--thyme);color:var(--thyme-ink)}
+.verdict.v2{background:var(--thyme-soft);color:var(--thyme)}
+.verdict.v2 ul,.verdict.v3 ul,.verdict.v4 ul{color:var(--ink2)}
+.verdict.v4{background:var(--sunk);color:var(--mute)}
+.verdict.vb{background:var(--bug-soft);color:var(--bug)}
+.verdict.vb ul{color:var(--ink2)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:14px 16px;margin:0 0 16px;box-shadow:var(--shadow)}
+.panel .vchips{display:flex;flex-wrap:wrap;gap:6px}
+.panel .tip{margin:10px 0 0;font-size:14px;color:var(--ink2)}
+.panel details{margin-top:8px;font-size:14px;color:var(--ink2)}
+.panel summary{cursor:pointer;color:var(--mute);font-size:13.5px}
+.panel details ul{margin:6px 0 0;padding-left:18px}
+.chip .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
 .acts{display:flex;gap:8px;margin-top:auto;padding-top:4px}
 .btn{flex:1;display:inline-flex;justify-content:center;align-items:center;gap:6px;border-radius:999px;padding:10px 14px;font-size:14px;font-weight:600;text-decoration:none;cursor:pointer;border:1px solid var(--line);background:var(--surface);color:var(--ink);white-space:nowrap}
 .btn:hover{background:var(--sunk)}
@@ -333,6 +350,7 @@ async function load() {
   PROMOS.sort((a, b) => b.t.localeCompare(a.t));
   BYURL = new Map(ALL.map((r) => [r.u, r]));
   const seenU = new Set();
+  analyze(PROMOS);
   ACTIVE = PROMOS.filter((x) => !seenU.has(x.u) && seenU.add(x.u) && stillOn(x));
   VOOS = got.flatMap((g) => g.voos || []).map((v) => ({ ...v, u: safeUrl(v.u), g: safeUrl(v.g) }));
   VOOSON = got.some((g) => g.voosOn);
@@ -546,7 +564,7 @@ function ago(d) {
 
 // Card da promoção: foto, preço e motivo à vista; o resto abre ao tocar
 function bigCard(o, feat) {
-  const ref = o.prev && o.prev > o.p ? o.prev : o.usual > o.p ? o.usual : 0;
+  const ref = o.usual > o.p ? o.usual : o.prev && o.prev > o.p ? o.prev : 0; // mesma conta da análise
   const drop = o.bug ? `BUG −${o.pc}%` : ref ? `−${pct(ref, o.p)}%` : "Baixou";
   const img = o.i ? `<div class="pic"><span class="off${o.bug ? " bug" : ""}">${drop}</span>${o.at ? `<span class="ago">${ago(o.at)}</span>` : ""}${imgTag(o.i, "this.remove()")}</div>` : "";
   return `<article class="deal${feat ? " feat" : ""}">${img}<div class="body">
@@ -555,7 +573,8 @@ function bigCard(o, feat) {
     ${o.notes?.length ? `<div class="tags">${o.notes.map((t) => `<span class="tag${/thyme/i.test(t) ? " thyme" : ""}">${esc(t.replace(/^\p{Extended_Pictographic}\s*/u, ""))}</span>`).join("")}</div>` : ""}
     ${pay(o.p, o.x, o.pi, o.store, ref)}
     ${o.bug ? `<div class="bugnote">BUG: queda de ${o.pc}% de uma vez, parece erro de preço da loja.</div>` : ""}
-    ${o.why?.length ? `<div class="why">${esc(o.why.join("; ").replace(/^./, (c) => c.toUpperCase()))}.</div>` : ""}
+    ${o.v ? `<div class="verdict ${o.v.cls}"><b>${o.v.label}</b>${o.v.notes.length ? `<ul>${o.v.notes.map((t) => `<li>${esc(t)}</li>`).join("")}</ul>` : ""}</div>` : ""}
+    ${!o.v && o.why?.length ? `<div class="why">${esc(o.why.join("; ").replace(/^./, (c) => c.toUpperCase()))}.</div>` : ""}
     ${o.todayTxt ? `<div class="today">${esc(o.todayTxt)}</div>` : ""}
     <details class="more"><summary>Detalhes e histórico ${CHEV}</summary>${facts(o, true)}${chart(o.h, o.p)}${o.when ? `<div class="note">${esc(o.when)}</div>` : ""}</details>
     <div class="acts"><a class="btn pri" href="${esc(o.u)}" target="_blank" rel="noopener">Ver na loja ${EXT}</a><button class="btn" data-cmp="${esc(o.n)}">${CMP}Comparar lojas</button></div>
@@ -581,11 +600,79 @@ function stillOn(x) {
   return item && item.a && item.p <= x.p + 0.01;
 }
 
+// ---------- Análise: vale muito a pena, vale, desconto pequeno, já acabou ----------
+// Compara o preço avisado com o que o produto costumava custar (média de 30 dias ou preço anterior),
+// não com o "de" da loja, que muitas vezes é inflado.
+const VERDICTS = [
+  { k: "v1", label: "Vale muito a pena", color: "var(--thyme)" },
+  { k: "v2", label: "Vale a pena", color: "#9bb06f" },
+  { k: "v3", label: "Desconto pequeno", color: "var(--mute)" },
+  { k: "v4", label: "Já acabou", color: "var(--line)" },
+  { k: "vb", label: "Pode ser erro de preço", color: "var(--bug)" },
+];
+let vfilter = "";
+function analyze(list) {
+  // liquidação: muitas peças da mesma loja com o mesmo desconto na mesma hora
+  const wave = {};
+  for (const x of list) { const k = `${x.l}|${x.t.slice(0, 13)}|${x.pc || 0}`; wave[k] = (wave[k] || 0) + 1; }
+  for (const x of list) {
+    const item = BYURL.get(x.u);
+    const ref = x.q > x.p ? x.q : x.e > x.p ? x.e : 0;
+    const real = ref ? Math.round((1 - x.p / ref) * 100) : x.pc || 0;
+    const lowest = x.m && x.p <= x.m + 0.01;
+    const notes = [];
+    if (ref) notes.push(`${real}% abaixo do que costumava custar (${brl(ref)})`);
+    if (lowest && x.c > x.m) notes.push("Menor preço desde que o robô acompanha");
+    const shown = x.d > x.p ? Math.round((1 - x.p / x.d) * 100) : 0;
+    if (ref && x.d >= ref * 1.4 && shown - real >= 15) notes.push(`O "de" da loja (${brl(x.d)}) está inflado: o site mostra −${shown}%, mas o desconto real é ${real}%`);
+    const n = wave[`${x.l}|${x.t.slice(0, 13)}|${x.pc || 0}`];
+    if (n >= 8) notes.push(`Liquidação da loja: ${n} peças com o mesmo desconto ao mesmo tempo`);
+    let k;
+    const ended = !(item && item.a && item.p <= x.p + 0.01);
+    if (ended) {
+      k = "v4";
+      notes.unshift(!item ? "Saiu do site da loja" : !item.a ? "Acabou o estoque" : `Voltou a subir: hoje ${brl(item.p)}`);
+    } else if (x.bug) {
+      k = "vb";
+      notes.unshift("Queda grande demais de uma vez; a loja pode cancelar o pedido");
+    } else if (real >= 35 || (real >= 25 && lowest)) k = "v1";
+    else if (real >= 20 && !(n >= 8 && real < 25)) k = "v2";
+    else {
+      k = "v3";
+      notes.push(n >= 8 ? "É o desconto padrão da liquidação, não uma queda especial desta peça" : "Menos de 20% abaixo do normal: dá para esperar uma queda maior");
+    }
+    if (!ended && item && item.p < x.p - 0.01) notes.unshift(`Baixou mais desde o aviso: hoje ${brl(item.p)}`);
+    const V = VERDICTS.find((v) => v.k === k);
+    x.v = { k, cls: k, label: V.label, notes: notes.slice(0, 3) };
+  }
+}
+function panel(list) {
+  const count = Object.fromEntries(VERDICTS.map((v) => [v.k, 0]));
+  for (const x of list) count[x.v.k]++;
+  const chips = [["", "Todas", list.length, ""], ...VERDICTS.filter((v) => count[v.k]).map((v) => [v.k, v.label, count[v.k], v.color])]
+    .map(([k, l, n, c]) => `<button class="chip" data-v="${k}" aria-pressed="${k === vfilter}">${c ? `<i class="dot" style="background:${c}"></i>` : ""}${l}<small>${n}</small></button>`).join("");
+  const bf = new Date(Date.UTC(new Date().getFullYear(), 10, 1));
+  bf.setUTCDate(1 + ((5 - bf.getUTCDay() + 7) % 7) + 21); // 4ª sexta de novembro
+  const daysBF = Math.ceil((bf - Date.now()) / 86400000);
+  const tip = daysBF >= 0 && daysBF <= 10
+    ? `<p class="tip">Black Friday é ${bf.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", timeZone: "UTC" })}${daysBF ? `, daqui a ${daysBF} ${daysBF === 1 ? "dia" : "dias"}` : ", hoje"}. "Desconto pequeno" costuma valer a pena esperar; "Vale muito a pena" com estoque é melhor não deixar passar.</p>`
+    : "";
+  return `<div class="panel"><div class="vchips" id="vchips">${chips}</div>${tip}
+    <details><summary>Como a análise decide</summary><ul>
+      <li>Compara com o que o produto costumava custar no robô (média de 30 dias ou preço anterior), não com o "de" da loja.</li>
+      <li><b>Vale muito a pena</b>: 35% ou mais abaixo do normal, ou 25% ou mais e no menor preço já visto.</li>
+      <li><b>Vale a pena</b>: de 20% a 34% abaixo do normal.</li>
+      <li><b>Desconto pequeno</b>: menos de 20%, ou o mesmo desconto de uma liquidação da loja inteira (abaixo de 25%).</li>
+      <li><b>Já acabou</b>: voltou a subir, acabou o estoque ou saiu do site.</li>
+      <li>O robô acompanha os preços desde ${day(Math.min(...list.map((x) => x.f || TODAY())))}. Com pouco tempo de histórico, o "normal" ainda pode mudar.</li>
+    </ul></details></div>`;
+}
+
 function fromPromo(x) {
   const item = BYURL.get(x.u);
   const when = new Date(x.t);
   return {
-    bug: x.bug, pc: x.pc, at: when, why: x.y, n: x.n, b: x.b, u: x.u, i: x.i, store: x.l, p: x.p, x: x.x, pi: x.pi || item?.pi, lp: x.d,
+    v: x.v, bug: x.bug, pc: x.pc, at: when, why: x.y, n: x.n, b: x.b, u: x.u, i: x.i, store: x.l, p: x.p, x: x.x, pi: x.pi || item?.pi, lp: x.d,
     prev: x.e, usual: x.q, prevMin: x.r, min: x.m, max: x.c, since: x.f, changes: x.g, notes: x.o || [],
     coupons: (x.cp || []).map((k) => ({ c: k.c, t: k.t })), pixTxt: x.cx, h: item?.h,
     todayTxt: item && item.p !== x.p ? `Hoje está ${brl(item.p)}${item.a ? "" : ", sem estoque"}` : item && !item.a ? "Hoje sem estoque" : "",
@@ -598,20 +685,28 @@ function drawPromo() {
   $("clear").hidden = !words.length;
   const on = tab === "ativas";
   const base = on ? ACTIVE : PROMOS;
-  const list = base.filter((x) => (!brand || x.b === brand) && words.every((w) => norm(`${x.n} ${x.b} ${x.l}`).includes(w)));
+  const all = base.filter((x) => (!brand || x.b === brand) && words.every((w) => norm(`${x.n} ${x.b} ${x.l}`).includes(w)));
+  if (vfilter && !all.some((x) => x.v.k === vfilter)) vfilter = "";
+  // melhores primeiro (vale muito, possível erro, vale, pequeno, acabou); dentro de cada grupo, a mais nova
+  const RANK = { v1: 0, vb: 1, v2: 2, v3: 3, v4: 4 };
+  const list = (vfilter ? all.filter((x) => x.v.k === vfilter) : all.slice()).sort((a, b) => RANK[a.v.k] - RANK[b.v.k] || b.t.localeCompare(a.t));
   const n = list.length, inBrand = brand ? ` em ${esc(brand)}` : "";
   const head = on
     ? `<div class="head"><div><h2>${n ? `${n} ${n === 1 ? "promoção ainda valendo" : "promoções ainda valendo"}` : "Ainda valendo"}${inBrand}</h2>
       <p>Quedas de preço dos últimos 14 dias que continuam com o mesmo preço ou mais barato hoje, e com estoque.</p></div></div>`
     : `<div class="head"><div><h2>${n ? `${n} ${n === 1 ? "queda de preço" : "quedas de preço"}` : "Promoções"}${inBrand}</h2>
-      <p>Tudo o que o robô avisou no Telegram nos últimos 14 dias. A mais nova vem primeiro.</p></div></div>`;
+      <p>Tudo o que o robô avisou no Telegram nos últimos 14 dias, com a análise de cada uma. As que mais valem a pena vêm primeiro.</p></div></div>`;
   const empty = on
     ? `<b>Nenhuma promoção${brand ? ` de ${esc(brand)}` : ""} ainda valendo</b>As quedas avisadas já voltaram ao preço normal ou acabaram no estoque. Veja o histórico em Promoções.`
     : `<b>Nenhuma queda de preço${brand ? ` de ${esc(brand)}` : ""} nos últimos 14 dias</b>Quando o robô avisar no Telegram, aparece aqui também. Para ver os preços de hoje, abra Produtos.`;
-  $("vpromo").innerHTML = head + (n
+  $("vpromo").innerHTML = head + (all.length ? panel(all) : "") + (n
     ? `<div class="promos">${list.map((x, i) => bigCard(fromPromo(x), i === 0 && !words.length)).join("")}</div>`
     : `<div class="promos"><div class="empty">${empty}</div></div>`);
 }
+$("vpromo").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-v]"); if (!b) return;
+  vfilter = b.dataset.v; drawPromo();
+});
 
 // ---------- Passagens aéreas ----------
 let VOOS = [], VOOSON = false, vOrig = "";
@@ -637,10 +732,10 @@ function voo(v) {
     <div class="who"><b>${esc(v.al)}</b><span>saindo de ${esc(v.on)} · ${MES[+v.m.slice(5, 7) - 1]} de ${v.m.slice(0, 4)}</span></div>
     <p class="route">${esc(v.dn)} <span>${esc(v.d)}</span></p>
     <div class="dates">Ida ${dmy(v.dep)}${v.ret ? ` · volta ${dmy(v.ret)}` : ""}</div>
-    <div class="pay"><div class="now">${brl(v.p)}</div><div class="paylbl">ida e volta, por pessoa, econômica · casal ${brl(v.p * 2)}</div>${usualDrop ? `<div class="was">já esteve ${brl(v.mx)}</div>` : ""}</div>
+    <div class="pay"><div class="now">${brl(v.p)}</div><div class="paylbl">ida e volta, por pessoa, econômica · casal ${brl(v.p * 2)}</div><div class="paylbl">Preço do Aviasales</div>${usualDrop ? `<div class="was">já esteve ${brl(v.mx)}</div>` : ""}</div>
     ${tags.length ? `<div class="tags">${tags.join("")}</div>` : ""}
-    <details class="more"><summary>Detalhes e histórico ${CHEV}</summary><dl class="facts">${F.join("")}</dl>${chart(v.h, v.p)}<div class="note">Preço encontrado em buscas das últimas 48 h. Confira antes de comprar: ${[[v.k, "Skyscanner"], [v.y, "Kayak"], [v.c, "site da companhia"], ["https://flights.booking.com/", "Booking"], ["https://matrix.itasoftware.com/", "Matrix ITA"]].filter((x) => safeUrl(x[0])).map(([u, t]) => `<a href="${esc(safeUrl(u))}" target="_blank" rel="noopener">${t}</a>`).join(" · ")}</div></details>
-    <div class="acts">${v.u ? `<a class="btn pri" href="${esc(v.u)}" target="_blank" rel="noopener">Aviasales ${EXT}</a>` : ""}<a class="btn" href="${esc(v.g)}" target="_blank" rel="noopener">Google Voos ${EXT}</a></div>
+    <details class="more"><summary>Detalhes e histórico ${CHEV}</summary><dl class="facts">${F.join("")}</dl>${chart(v.h, v.p)}<div class="note">Esse preço está no Aviasales (buscas das últimas 48 h; pode ter mudado). Para conferir: Google Voos${safeUrl(v.c) ? ` ou o <a href="${esc(safeUrl(v.c))}" target="_blank" rel="noopener">site da ${esc(v.al)}</a>` : ""}.</div></details>
+    <div class="acts">${v.u ? `<a class="btn pri" href="${esc(v.u)}" target="_blank" rel="noopener">Ver no Aviasales ${EXT}</a>` : ""}<a class="btn" href="${esc(v.g)}" target="_blank" rel="noopener">Google Voos ${EXT}</a></div>
   </div></article>`;
 }
 function drawVoos() {

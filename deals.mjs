@@ -23,14 +23,17 @@ const MINE_SRC = "europa|portugal|lisboa|porto(?! seguro| alegre| de galinhas| v
 const MINE = words(MINE_SRC);
 
 // Promo boa = "a partir de" do título abaixo do teto da região (ida e volta, por pessoa, com taxas).
-// Europa e EUA seguem as metas dele (R$ 4.000 e R$ 2.500); acima disso o blog chama de promoção, mas não é.
+// Europa, Orlando e EUA seguem as metas dele (R$ 4.000, R$ 3.000 e R$ 2.500); acima disso o blog chama de promoção, mas não é.
 // Título sem destino de fora reconhecido = fica de fora (era assim que promo do Brasil escapava).
 export const REGIONS = [
-  { name: "Europa", max: 4000, re: words(MINE_SRC + "|irlanda|dublin|esc[oó]cia|edimburgo|cro[aá]cia|b[eé]lgica|bruxelas|dinamarca|copenhague|noruega|su[eé]cia|finl[aâ]ndia|pol[oô]nia|hungria|budapeste|turquia|istambul") },
-  { name: "EUA, Canadá, México e Caribe", max: 2500, re: words("estados unidos|eua|miami|fort lauderdale|nova york|new york|boston|chicago|atlanta|dallas|houston|las vegas|los angeles|san francisco|washington|canad[aá]|toronto|montreal|vancouver|quebec|m[eé]xico|canc[uú]n|caribe|punta cana|rep[uú]blica dominicana|aruba|cura[cç]ao|jamaica|cuba|panam[aá]|costa rica") },
+  { name: "Europa", max: 4000, re: words(MINE_SRC.replace("|orlando|disney|bahamas|nassau", "") + "|irlanda|dublin|esc[oó]cia|edimburgo|cro[aá]cia|b[eé]lgica|bruxelas|dinamarca|copenhague|noruega|su[eé]cia|finl[aâ]ndia|pol[oô]nia|hungria|budapeste|turquia|istambul") },
+  { name: "Orlando", max: 3000, re: words("orlando|disney|mco") },
+  { name: "EUA, Canadá, México e Caribe", max: 2500, re: words("bahamas|nassau|estados unidos|eua|miami|fort lauderdale|nova york|new york|boston|chicago|atlanta|dallas|houston|las vegas|los angeles|san francisco|washington|canad[aá]|toronto|montreal|vancouver|quebec|m[eé]xico|canc[uú]n|caribe|punta cana|rep[uú]blica dominicana|aruba|cura[cç]ao|jamaica|cuba|panam[aá]|costa rica") },
   { name: "América do Sul", max: 1200, re: words("chile|santiago|argentina|buenos aires|bariloche|mendoza|ushuaia|uruguai|montevid[eé]u|punta del este|peru|lima|cusco|col[oô]mbia|bogot[aá]|cartagena|medell[ií]n|san andr[eé]s|santa marta|equador|quito|bol[ií]via|paraguai|assun[cç][aã]o|atacama|calama") },
   { name: "Ásia, África e Oceania", max: 5000, re: words("jap[aã]o|t[oó]quio|tokyo|osaka|coreia|seul|china|xangai|pequim|tail[aâ]ndia|bangkok|dubai|emirados|catar|doha|egito|cairo|[aá]frica|marrocos|israel|maldivas|[ií]ndia|austr[aá]lia|sydney|nova zel[aâ]ndia|singapura|vietn[aã]|bali|indon[eé]sia") },
 ];
+// Promoção de companhia low cost fica de fora (usuário, 23/11: "ryanair é lowcost")
+const LOWCOST = /ryanair|easyjet|easy jet|vueling|wizz ?air|arajet|jetsmart|jet smart|flybondi|sky airline|norse|level|spirit|frontier|transavia|eurowings|volotea|pegasus|flynas|air arabia|flydubai/i;
 const FLIGHT = /passage|voo|voos|a[eé]re|ida e volta/i;
 const NOT_FLIGHT = /ingresso|parque|hotel|hospedagem|chip|seguro viagem|cruzeiro|aluguel de carro|montanha-russa|sorteio|sortear|milhas|pontos|taxa de/i;
 
@@ -81,7 +84,7 @@ const priceOf = (t) => {
 // Só passagem para FORA do Brasil e com preço abaixo do teto da região; senão devolve null.
 export const judgeDeal = (d) => {
   const t = d.title || "";
-  if (!FLIGHT.test(t) || NOT_FLIGHT.test(t)) return null;
+  if (!FLIGHT.test(t) || NOT_FLIGHT.test(t) || LOWCOST.test(t + " " + (d.desc || ""))) return null;
   const region = REGIONS.find((r) => r.re.test(t));
   if (!region) return null;
   const price = priceOf(t);
@@ -141,15 +144,22 @@ export async function checkDeals({ state, nowDay }) {
 
 export function dealCaption(d, { esc }) {
   const when = new Date(d.at).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  const brl = (v) => "R$ " + v.toLocaleString("pt-BR");
+  // título do blog sem o preço e sem "Promoção:" no começo (o preço vem numa linha própria)
+  const title = String(d.title || "")
+    .replace(/^\s*(promo[cç][aã]o|promo|imperd[ií]vel|urgente)\s*[:!\-–—|]\s*/i, "")
+    .replace(/\s*[-–—:|,]?\s*(a partir de|por|desde)?\s*R\$\s?[\d.]+(,\d{2})?.*$/i, "")
+    .trim().replace(/^./, (c) => c.toUpperCase()) || d.title;
   const desc = (d.desc || "").replace(/\s+/g, " ").replace(/Promoção encontrada pelo Passagens Imperdíveis:.*$/i, "").trim();
-  const lines = [
-    `🗞️ <b>Promoção no ${esc(d.src)}</b> · ${when}`,
-    ``,
-    `<b>${esc(d.title)}</b>`,
-  ];
-  if (d.price) lines.push(`A partir de R$ ${d.price.toLocaleString("pt-BR")} ida e volta (promo boa para ${esc(d.region)} = até R$ ${d.max.toLocaleString("pt-BR")})`);
+  const lines = [`✈️ <b>${esc(title)}</b>`, ``];
+  if (d.price) {
+    lines.push(`💰 A partir de <b>${brl(d.price)}</b> por pessoa, ida e volta`);
+    lines.push(`👫 Casal: ${brl(d.price * 2)}`);
+    const gap = d.max - d.price;
+    lines.push(gap > 0 ? `🎯 ${brl(gap)} abaixo da sua meta para ${esc(d.region)} (${brl(d.max)})` : `🎯 No limite da sua meta para ${esc(d.region)} (${brl(d.max)})`);
+  }
   if (d.mine) lines.push(`⭐ Destino da sua lista`);
-  if (desc) lines.push(``, esc(desc.length > 380 ? desc.slice(0, 377) + "…" : desc));
-  lines.push(``, `<a href="${esc(d.url)}">Ver a promoção</a>`);
+  if (desc) lines.push(``, esc(desc.length > 260 ? desc.slice(0, 257).replace(/\s+\S*$/, "") + "…" : desc));
+  lines.push(``, `🗞️ ${esc(d.src)} · ${when}`, `Link: ${esc(d.url)}`);
   return lines.join("\n").slice(0, 1024);
 }

@@ -49,7 +49,8 @@ const DEST_CODES = (process.env.FLIGHT_DESTS || Object.keys(DESTS).join(",")).sp
 // Low cost: a própria fonte marca (is_lowcost). Estes entram na marra, caso a lista falhe.
 // Arajet (DM) é low cost; Azul e GOL NÃO contam como low cost (pedido do usuário em 20/11/2026).
 const NOT_LOWCOST = ["G3", "AD"];
-const LOWCOST_EXTRA = ["DM", "FR", "U2", "W6", "VY", "NK", "F9", "B6", "H2", "JA", "HV", "TO", "EW", "V7", "DY", "D8", "N0", "FO", "WN", "G4", "XP", "LS"];
+// Ryanair (FR) e as empresas do grupo: Ryanair UK (RK), Malta Air (AL), Lauda (LW), Buzz (RR). Usuário, 23/11: "ryanair é lowcost".
+const LOWCOST_EXTRA = ["DM", "FR", "RK", "AL", "LW", "RR", "U2", "W6", "VY", "NK", "F9", "B6", "H2", "JA", "HV", "TO", "EW", "V7", "DY", "D8", "N0", "FO", "WN", "G4", "XP", "LS"];
 
 // Site de cada companhia (para conferir e comprar direto)
 const AIRLINE_SITE = {
@@ -64,8 +65,8 @@ const AIRLINE_SITE = {
 
 // Meta de preço por região (por pessoa, ida e volta): avisa na hora, sem esperar histórico.
 // Europa a R$ 4.000: "to acostumado com passagem pra europa por 4000" (usuário, 20/11/2026)
-// Orlando a R$ 2.500 (usuário, 20/11/2026). Por código de destino ou por região.
-const TARGETS = { Europa: Number(process.env.FLIGHT_TARGET_EUROPA || 4000), ORL: Number(process.env.FLIGHT_TARGET_ORLANDO || 2500) };
+// Orlando (MCO) até R$ 3.000 (usuário, 23/11/2026; antes 2.500). Por código de destino ou por região.
+const TARGETS = { Europa: Number(process.env.FLIGHT_TARGET_EUROPA || 4000), ORL: Number(process.env.FLIGHT_TARGET_ORLANDO || 3000) };
 const targetFor = (d) => TARGETS[d] ?? TARGETS[DESTS[d]?.g];
 
 export const FLIGHT_RULES = {
@@ -256,12 +257,11 @@ export function flightAlertText(state, a, { brl, esc }) {
   if (a.ret) lines.push(`Volta: ${stops(a.rtr)}${a.durb ? `, ${hm(a.durb)}` : ""}`);
   lines.push(`🧳 Bagagem: a fonte não informa. Confira se a tarifa inclui mala despachada antes de pagar.`);
   lines.push(``, `Motivo: ${esc(a.reasons.join("; "))}.`);
-  lines.push(`Preço encontrado em buscas das últimas 48 h; pode ter mudado.`);
-  const links = [
-    [aviasalesUrl(a), "Aviasales"], [googleFlightsUrl(a), "Google Voos"], [skyscannerUrl(a), "Skyscanner"],
-    [kayakUrl(a), "Kayak"], [airlineUrl(a), `Site ${airlineName(state, a.air)}`], [bookingUrl(), "Booking"], [matrixUrl(), "Matrix ITA"],
-  ].filter((x) => x[0]);
-  lines.push(``, `Conferir: ${links.map(([u, t]) => `<a href="${esc(u)}">${esc(t)}</a>`).join(" · ")}`);
+  // O preço vem do Aviasales: é lá que o valor aparece. Usuário, 23/11: "me indique qual site aparece o valor informado".
+  lines.push(``, `📍 <b>Esse preço está no Aviasales</b> (buscas das últimas 48 h; pode ter mudado)`);
+  lines.push(`Link: ${esc(aviasalesUrl(a))}`);
+  const air = airlineUrl(a);
+  lines.push(``, `Para conferir: <a href="${esc(googleFlightsUrl(a))}">Google Voos</a>${air ? ` · <a href="${esc(air)}">site da ${esc(airlineName(state, a.air))}</a>` : ""}`);
   return lines.join("\n");
 }
 
