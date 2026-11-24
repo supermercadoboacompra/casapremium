@@ -5,7 +5,7 @@
 //   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  — obrigatórias para enviar
 //   TEST_ONLY=true   — só manda uma mensagem de teste e sai
 //   DRY_RUN=true     — consulta as lojas mas não envia nada (mostra no log)
-//   ONLY=smeg,karsten — consulta só essas lojas (para testes)
+//   ONLY=smeg,trussardi — consulta só essas lojas (para testes)
 //   CATALOG_FILE=catalogo.json — grava a lista de produtos para o site (docs/index.html)
 //   TRAVELPAYOUTS_TOKEN — liga a aba de passagens aéreas (ver flights.mjs); ONLY=voos testa só ela
 
@@ -51,7 +51,6 @@ const STORES = [
   { id: "smeg", name: "Smeg Brasil", type: "magazord", brand: "Smeg", heavy: true, home: "https://www.smegbrasil.com.br",
     sitemap: "https://www.smegbrasil.com.br/sitemap-produto.xml" },
   { id: "kitchenaid", name: "KitchenAid", type: "vtex", host: "https://www.kitchenaid.com.br" },
-  { id: "karsten", name: "Karsten", type: "vtex", host: "https://www.karsten.com.br" },
   { id: "trussardi", name: "Trussardi", type: "vtex", host: "https://www.trussardi.com.br" },
   { id: "casaalmeida", name: "Casa Almeida", type: "wake", brand: "Buddemeyer", home: "https://www.casaalmeida.com.br",
     search: "https://www.casaalmeida.com.br/busca?q=buddemeyer" },
@@ -84,7 +83,7 @@ const STORES = [
 const brandKey = (s) => (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z]/g, "");
 
 const BRANDS = [
-  "Le Creuset", "Smeg", "KitchenAid", "Karsten", "Trussardi", "Buddemeyer",
+  "Le Creuset", "Smeg", "KitchenAid", "Trussardi", "Buddemeyer",
   "Trousseau", "Bialetti", "Altenburg",
   "Staub", "Zwilling", "Riedel", "Spiegelau", "Schott Zwiesel", "Vista Alegre", "Emile Henry",
   "Wolff", "Laguiole", "Mozart", "Breville", "Wüsthof",
@@ -661,6 +660,9 @@ const canonBrand = (b) => {
   return BRANDS.find((x) => k.includes(brandKey(x))) || b;
 };
 
+// Marcas tiradas a pedido do usuário (Karsten em 24/11/2026): somem do site mesmo vendidas por outra loja
+const REMOVED_BRANDS = /karsten/i;
+
 // Catálogo para o site (docs/): produtos vistos nos últimos 2 dias, com preço e histórico resumido.
 // Campos curtos para o arquivo ficar leve no celular.
 function exportCatalog(state, nowDay, file) {
@@ -670,6 +672,7 @@ function exportCatalog(state, nowDay, file) {
     if (!r.p || r.d < nowDay - 1) continue;
     if (r.s && !STORES.some((x) => x.id === r.s)) continue; // loja removida (ex.: Oxford)
     if (/garantia estendida|seguro/i.test(r.n) || /seguradora|oxford/i.test(r.b)) continue; // Oxford: "não é premium"
+    if (REMOVED_BRANDS.test(r.b || "")) continue;
     const k = `${r.s}|${r.n}|${r.p}`;
     if (seen.has(k)) continue;
     seen.add(k);
@@ -691,7 +694,7 @@ function exportCatalog(state, nowDay, file) {
     l: s.name, c: state.coupons[s.id].codes.map((k) => k.code), t: state.coupons[s.id].codes.map((k) => k.text.slice(0, 120)),
     x: state.coupons[s.id].pix || "",
   }));
-  const promos = (state.promos || []).filter((x) => STORES.some((s) => s.id === x.s) || !x.s);
+  const promos = (state.promos || []).filter((x) => (STORES.some((s) => s.id === x.s) || !x.s) && !REMOVED_BRANDS.test(x.b || ""));
   const voos = exportFlights(state, nowDay);
   fs.writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), items, cupons, promos, voos, voosOn: flightsEnabled() }));
   console.log(`Catálogo do site: ${items.length} produtos, ${promos.length} promoções, ${voos.length} rotas de avião em ${file}`);
