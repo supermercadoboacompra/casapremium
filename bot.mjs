@@ -922,6 +922,14 @@ function alertText(a) {
   if (a.bug) lines.push(`BUG: queda de ${Math.round(a.drop)}% parece erro de preço da loja. Pode ser cancelado.`);
   if (a.notes.length) lines.push(esc(a.notes.join(" · ")));
   const c = a.coupons;
+  if (a.variants?.length > 1) {
+    lines.push("", `📏 <b>${a.variantsTitle} em promoção (${a.variants.length}):</b>`);
+    for (const v of a.variants) {
+      const off = v.prev > v.price ? ` (−${Math.round(((v.prev - v.price) / v.prev) * 100)}%)` : "";
+      lines.push(`• ${esc(v.label)}: <b>${brl(v.price)}</b>${off}${v.pix && v.pix < v.price ? ` · Pix ${brl(v.pix)}` : ""}`);
+    }
+    lines.push("", `Abaixo, os detalhes do mais barato (${esc(a.variants[0].label)}):`);
+  }
   lines.push("", `💳 <b>No cartão: ${brl(a.price)}</b>${a.inst ? ` (até ${a.inst[0]}x de ${brl(a.inst[1])} sem juros)` : ""}`);
   lines.push(pixLine(a.price, a.pix, c?.pix));
   if (a.prevPrice) lines.push(`⏪ Antes: ${brl(a.prevPrice)}${a.prevPrice === a.price ? " (sem mudança)" : pct(a.prevPrice)}`);
@@ -935,6 +943,44 @@ function alertText(a) {
   for (const k of c?.codes || []) lines.push(`🎟️ Cupom: <code>${esc(k.code)}</code> (${esc(k.text.slice(0, 90))})`);
   lines.push("", `🔗 Link: ${esc(a.url)}`);
   return lines.join("\n");
+}
+
+// Tamanhos/variações do mesmo produto na mesma loja (King, Queen, 20 cm, 24 cm...) viram um alerta só.
+const SIZE_RX = /\b(super\s*king|king|queen|casal|solteir[aã]o|solteiro|vi[uú]va|berço|beb[eê]|infantil|juvenil|padr[aã]o|[ÚU]nico)\b|\b\d+(?:[.,]\d+)?\s*(?:x\s*\d+(?:[.,]\d+)?\s*){0,2}(?:cm|mm|m|ml|l|litros?)\b|\b\d+\s*x\s*\d+(?:\s*x\s*\d+)?\b/gi;
+const baseName = (name) => (name || "").split(" — ")[0];
+const sizeKey = (name) => brandKey(baseName(name).replace(SIZE_RX, " "));
+function variantLabel(name, base) {
+  const suffix = (name || "").split(" — ").slice(1).join(" — ").trim();
+  if (suffix) return suffix;
+  const sizes = (baseName(name).match(SIZE_RX) || []).map((s) => s.trim());
+  return sizes.join(" ") || baseName(name) || base;
+}
+function groupVariants(alerts) {
+  const groups = new Map();
+  for (const a of alerts) {
+    const k = `${a.store}|${sizeKey(a.name)}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(a);
+  }
+  return [...groups.values()].map((list) => {
+    if (list.length === 1) return list[0];
+    // principal = o mais barato (preço de cartão); a lista mostra todos
+    const main = [...list].sort((x, y) => x.price - y.price)[0];
+    const names = list.map((x) => baseName(x.name));
+    const sameBase = names.every((n) => n === names[0]);
+    const isSize = new RegExp(SIZE_RX.source, "i");
+    const onlySizes = list.every((x) => isSize.test(variantLabel(x.name, "")));
+    return {
+      ...main,
+      name: sameBase ? names[0] : baseName(main.name).replace(SIZE_RX, " ").replace(/\s{2,}/g, " ").trim(),
+      notes: [...new Set(list.flatMap((x) => x.notes))],
+      bug: list.some((x) => x.bug),
+      variantsTitle: onlySizes ? "Tamanhos" : "Opções",
+      variants: [...list].sort((x, y) => x.price - y.price).map((x) => ({
+        label: variantLabel(x.name, x.name), price: x.price, pix: x.pix, drop: x.drop, prev: x.prevPrice,
+      })),
+    };
+  });
 }
 
 async function sendAlert(a) {
@@ -1156,8 +1202,8 @@ async function main() {
 
   // anotados (ex.: Thyme) primeiro, depois as maiores quedas
   alerts.sort((x, y) => y.notes.length - x.notes.length || y.drop - x.drop);
-  // todas as promoções vão com foto e texto completo
-  for (const a of alerts) {
+  // todas as promoções vão com foto e texto completo; tamanhos do mesmo produto vão juntos (1 alerta)
+  for (const a of groupVariants(alerts)) {
     try {
       await sendAlert(a);
     } catch (e) {
