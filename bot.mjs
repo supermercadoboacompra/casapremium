@@ -79,6 +79,27 @@ const STORES = [
   { id: "cookstore", name: "Cook Store", type: "woo", host: "https://cookstore.com.br", brands: ["Le Creuset"] },
   // Casa Amelya (Tray, 28/11/2026): Le Creuset, KitchenAid, Smeg, Bialetti, Wolff, Bohemia, Laguiole, Porto Brasil, Cuisinart
   { id: "casaamelya", name: "Casa Amelya", type: "tray", host: "https://www.casaamelya.com.br", heavy: true },
+  // 28/11/2026: VTEX nova (Intelligent Search, is: true) — busca marca por marca, só os mais relevantes
+  { id: "carrefour", name: "Carrefour", type: "vtexBrands", is: true, host: "https://www.carrefour.com.br", heavy: true, cap: 200, skipBrands: ["Peugeot"] },
+  { id: "compracerta", name: "Compra Certa", type: "vtexBrands", is: true, host: "https://www.compracerta.com.br", heavy: true, brands: ["KitchenAid"] },
+  { id: "electrolux", name: "Electrolux", type: "vtexBrands", is: true, host: "https://loja.electrolux.com.br", heavy: true, brands: ["Electrolux"] },
+  { id: "lavillecasa", name: "La Ville Casa", type: "vtexBrands", is: true, host: "https://www.lavillecasa.com.br", heavy: true, cap: 300, skipBrands: ["Peugeot"] },
+  { id: "toolbox", name: "Toolbox", type: "vtexBrands", is: true, host: "https://www.tbox.com.br", heavy: true, cap: 300, skipBrands: ["Peugeot"] },
+  { id: "cafestore", name: "Café Store", type: "vtexBrands", is: true, host: "https://www.cafestore.com.br", heavy: true, cap: 200, skipBrands: ["Peugeot"] },
+  { id: "lojasmel", name: "Lojas Mel", type: "vtexBrands", is: true, host: "https://www.lojasmel.com", heavy: true, cap: 200, skipBrands: ["Peugeot"] },
+  { id: "lojasmm", name: "Lojas MM", type: "vtexBrands", is: true, host: "https://www.lojasmm.com", heavy: true, cap: 200, skipBrands: ["Peugeot"] },
+  { id: "supernosso", name: "Super Nosso", type: "vtexBrands", is: true, host: "https://www.supernosso.com", heavy: true, cap: 200, skipBrands: ["Peugeot"] },
+  { id: "bistek", name: "Bistek", type: "vtexBrands", is: true, host: "https://www.bistek.com.br", heavy: true, cap: 200, skipBrands: ["Peugeot"] },
+  { id: "supermuffato", name: "Super Muffato", type: "vtexBrands", is: true, host: "https://www.supermuffato.com.br", heavy: true, cap: 200, skipBrands: ["Peugeot"] },
+  // 28/11/2026: plataformas que o robô já lia
+  { id: "marlene", name: "Marlene Enxovais", type: "vtexBrands", host: "https://www.marleneenxovais.com.br", heavy: true, cap: 300, skipBrands: ["Peugeot"] },
+  { id: "attuale", name: "Attuale", type: "tray", host: "https://www.attuale.com.br", heavy: true },
+  { id: "leledacuca", name: "Lelé da Cuca", type: "tray", host: "https://www.leledacuca.com.br", heavy: true },
+  { id: "bordadoingles", name: "Bordado Inglês", type: "tray", host: "https://www.bordadoingles.com.br", heavy: true },
+  { id: "amare", name: "Amare Presentes", type: "shopify", host: "https://amarepresenteshome.com.br", heavy: true },
+  ...["Buddemeyer", "Trussardi", "Altenburg", "Kacyumara"].map((b) => ({
+    id: `casabergan-${b.toLowerCase()}`, name: "Casa Bergan", type: "wake", brand: b, multi: true, heavy: true,
+    home: "https://www.casabergan.com.br", search: `https://www.casabergan.com.br/busca?busca=${b.toLowerCase()}` })),
 ];
 
 // compara marcas sem acento, maiúscula ou espaço (Wüsthof = Wusthof)
@@ -241,7 +262,7 @@ function findProduct(node) {
 // Lojas multimarcas (Americanas): busca marca por marca e fica só com o que é da marca mesmo.
 async function readVtexBrands(store) {
   const out = new Map();
-  for (const brand of BRANDS.filter((b) => !(store.skipBrands || []).includes(b))) {
+  for (const brand of (store.brands || BRANDS).filter((b) => !(store.skipBrands || []).includes(b))) {
     const spec = BRAND_SPEC[brand] || {};
     const keep = spec.keep && (typeof spec.keep === "function" ? spec.keep : (n) => spec.keep.test(n));
     const rows = await readVtex({ ...store, ft: brand, keepBrand: spec.brand || brand, keepRx: keep || store.keepRx, cap: store.cap || 500 });
@@ -250,10 +271,24 @@ async function readVtexBrands(store) {
   return [...out.values()];
 }
 
+// VTEX nova (Intelligent Search): lojas que fecham a busca antiga (Carrefour, Electrolux, La Ville...).
+// Devolve os produtos no mesmo formato da busca antiga.
+async function readVtexISPages(store) {
+  const api = `${store.host}/api/io/_v/api/intelligent-search/product_search/`;
+  const q = encodeURIComponent(store.ft || "");
+  const page = async (n) => (await get(`${api}?query=${q}&count=50&page=${n}`, { json: true })).body;
+  const first = await page(1);
+  const total = first.recordsFiltered || 0;
+  const nPages = Math.min(Math.ceil(total / 50), Math.ceil((store.cap || 2500) / 50));
+  const rest = await pool(Array.from({ length: Math.max(0, nPages - 1) }, (_, i) => i + 2), 3, async (n) => (await page(n)).products || []);
+  const fix = (p) => ({ ...p, link: /^https?:/.test(p.link || "") ? p.link : `${store.host}${p.link || ""}` });
+  return { total, pages: [(first.products || []).map(fix), ...rest.map((l) => l.map(fix))] };
+}
+
 async function readVtex(store) {
   const api = `${store.host}/api/catalog_system/pub/products/search`;
   const ft = store.ft ? `ft=${encodeURIComponent(store.ft)}&` : "";
-  const norm = brandKey;
+  if (store.is) return vtexRows(store, await readVtexISPages(store));
   const head = await get(`${api}?${ft}_from=0&_to=0`);
   const total = parseInt((head.headers.get("resources") || "").split("/")[1] || "0", 10);
   // A VTEX só deixa paginar até 2.500. Se passar disso, lê o resto pela ordem inversa de preço.
@@ -269,6 +304,11 @@ async function readVtex(store) {
   const pages = await pool(ranges, 3, async ([order, f]) =>
     (await get(`${api}?${ft}${order ? `O=${order}&` : ""}_from=${f}&_to=${Math.min(f + 49, 2549)}`, { json: true })).body
   );
+  return vtexRows(store, { total, pages });
+}
+
+function vtexRows(store, { total, pages }) {
+  const norm = brandKey;
   const out = new Map();
   for (const page of pages) {
     for (const p of page || []) {
@@ -278,7 +318,7 @@ async function readVtex(store) {
       if (store.keepBrand && TOY_RX.test(p.productName)) continue;
       if (store.keepBrand) {
         const byBrand = norm(p.brand).includes(norm(store.keepBrand));
-        const noBrand = !p.brand || /indispon|naodisp|generic|semmarca/.test(norm(p.brand));
+        const noBrand = !p.brand || /indispon|naodisp|naoinform|generic|semmarca/.test(norm(p.brand));
         if (!byBrand && !(noBrand && norm(p.productName).includes(norm(store.keepBrand)))) continue;
       }
       for (const it of p.items || []) {
@@ -305,7 +345,8 @@ async function readVtex(store) {
         const sku = v && !p.productName.includes(v) ? ` — ${v}` : "";
         out.set(`${store.id}:${it.itemId}`, {
           key: `${store.id}:${it.itemId}`,
-          brand: store.brand || p.brand || store.name,
+          // marca vazia/"Não Informado" (vendedores do marketplace): usa a marca buscada
+          brand: store.brand || (!p.brand || /indispon|naodisp|naoinform|generic|semmarca/.test(norm(p.brand)) ? store.keepBrand : p.brand) || store.name,
           name: p.productName + sku,
           url: p.link,
           image: it.images?.[0]?.imageUrl,
@@ -427,6 +468,8 @@ async function readWake(store) {
   for (const p of [first.items, ...rest].flat().filter(Boolean)) {
     const price = num(p.offers?.price);
     if (!price || !p.url) continue;
+    // loja multimarcas: a busca pode trazer outras marcas; só entra o que tem a marca no nome
+    if (store.multi && !brandKey(p.name).includes(brandKey(store.brand))) continue;
     const key = `${store.id}:${p.url.split("/").pop()}`;
     out.set(key, { key, brand: store.brand, name: p.name, url: p.url, image: p.image, price, listPrice: null, available: true });
   }
