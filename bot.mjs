@@ -77,6 +77,8 @@ const STORES = [
   // GenioDesk (mesa com regulagem de altura) — loja oficial Shopify, marca única (20/11/2026)
   { id: "geniodesk", name: "GenioDesk", type: "shopify", host: "https://geniodesk.com.br", brand: "GenioDesk" },
   { id: "cookstore", name: "Cook Store", type: "woo", host: "https://cookstore.com.br", brands: ["Le Creuset"] },
+  // Casa Amelya (Tray, 28/11/2026): Le Creuset, KitchenAid, Smeg, Bialetti, Wolff, Bohemia, Laguiole, Porto Brasil, Cuisinart
+  { id: "casaamelya", name: "Casa Amelya", type: "tray", host: "https://www.casaamelya.com.br", heavy: true },
 ];
 
 // compara marcas sem acento, maiúscula ou espaço (Wüsthof = Wusthof)
@@ -468,6 +470,51 @@ async function readShopify(store) {
   return [...out.values()];
 }
 
+// Lojas Tray (Casa Amelya): API pública /web_api; acha as nossas marcas na lista da loja e lê marca por marca
+async function readTray(store) {
+  const marcas = [];
+  for (let page = 1; page <= 10; page++) {
+    const { body } = await get(`${store.host}/web_api/brands?limit=50&page=${page}`, { json: true });
+    for (const { Brand: b } of body.Brands || []) {
+      const brand = isOurBrand(b.brand);
+      if (brand) marcas.push({ id: b.id, brand });
+    }
+    if (!body.paging || page * 50 >= body.paging.total) break;
+  }
+  if (!marcas.length) throw new Error("nenhuma das nossas marcas na loja");
+  const out = new Map();
+  for (const { id, brand } of marcas) {
+    const spec = BRAND_SPEC[brand] || {};
+    const keep = spec.keep && (typeof spec.keep === "function" ? spec.keep : (n) => spec.keep.test(n));
+    for (let page = 1; page <= 60; page++) {
+      const { body } = await get(`${store.host}/web_api/products?brand_id=${id}&available=1&limit=50&page=${page}`, { json: true });
+      for (const { Product: p } of body.Products || []) {
+        if (p.available !== "1" || p.available_for_purchase === "0" || TOY_RX.test(p.name) || (keep && !keep(p.name))) continue;
+        const cheio = num(p.price), promo = num(p.promotional_price);
+        const price = promo && cheio && promo < cheio ? promo : cheio;
+        if (!price) continue;
+        const pix = Math.min(...(p.payment_option_details || []).filter((x) => x.type === "pix").map((x) => num(x.value) || Infinity));
+        const key = `${store.id}:${p.id}`;
+        out.set(key, {
+          key,
+          brand,
+          // tira o "| Le Creuset" do fim do nome (a marca já aparece no alerta)
+          name: p.name.replace(/\s*\|\s*[^|]+$/, (m) => (brandKey(m).includes(brandKey(brand)) ? "" : m)),
+          url: p.url?.https || `${store.host}/${p.slug}`,
+          image: p.ProductImage?.[0]?.https,
+          price,
+          listPrice: cheio > price ? cheio : null,
+          pix: pix > 0 && pix < price ? pix : null,
+          available: true,
+        });
+      }
+      if (!body.paging || page * 50 >= body.paging.total) break;
+      await sleep(300);
+    }
+  }
+  return [...out.values()];
+}
+
 // Lojas WooCommerce (Cook Store): API pública da loja, marca por marca
 async function readWoo(store) {
   const out = new Map();
@@ -636,7 +683,7 @@ async function readCoupons(store) {
   return { codes: [...codes].map(([code, text]) => ({ code, text })), pix: pixMatch ? `${pixMatch[1]}% de desconto no Pix` : null };
 }
 
-const READERS = { vtex: readVtex, vtexBrands: readVtexBrands, vtexWatch: readVtexWatch, kabum: readKabum, lazer: readLazer, shopify: readShopify, woo: readWoo, sfcc: readSfcc, magazord: readMagazord, wake: readWake };
+const READERS = { tray: readTray, vtex: readVtex, vtexBrands: readVtexBrands, vtexWatch: readVtexWatch, kabum: readKabum, lazer: readLazer, shopify: readShopify, woo: readWoo, sfcc: readSfcc, magazord: readMagazord, wake: readWake };
 
 // ---------- histórico ----------
 // state.items[key] = { b, n, u, i, s, h: [[dia, preço], ...] (só quando o preço muda), a: preço do último aviso }
